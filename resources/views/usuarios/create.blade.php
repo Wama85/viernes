@@ -11,30 +11,40 @@
 
                 <form method="POST" action="{{ route('usuarios.store') }}">
                     @csrf
-
+<p class="mb-4 text-sm text-gray-500 dark:text-gray-400">
+    Los campos marcados con <span class="text-red-600">*</span> son obligatorios.
+</p>
                     <div class="mb-4">
-                        <x-input-label for="nombre" value="Nombre" />
+                        <x-input-label for="nombre">
+    Nombre <span class="text-red-600">*</span>
+</x-input-label>
                         <x-text-input id="nombre" name="nombre" type="text" class="mt-1 block w-full"
                                       value="{{ old('nombre') }}" required autofocus />
                         <x-input-error :messages="$errors->get('nombre')" class="mt-2" />
                     </div>
 
                     <div class="mb-4">
-                        <x-input-label for="email" value="Correo electrónico" />
+                        <x-input-label for="email">
+    Correo electrónico <span class="text-red-600">*</span>
+</x-input-label>
                         <x-text-input id="email" name="email" type="email" class="mt-1 block w-full"
                                       value="{{ old('email') }}" required />
                         <x-input-error :messages="$errors->get('email')" class="mt-2" />
                     </div>
 
                     <div class="mb-4">
-                        <x-input-label for="password" value="Contraseña" />
+                        <x-input-label for="password">
+    Contraseña <span class="text-red-600">*</span>
+</x-input-label>
                         <x-text-input id="password" name="password" type="password" class="mt-1 block w-full" required />
                         <x-input-error :messages="$errors->get('password')" class="mt-2" />
                     </div>
 
                     <div class="mb-4">
-                        <x-input-label for="id_rol" value="Rol" />
-                        <select id="id_rol" name="id_rol"
+                        <x-input-label for="id_rol">
+    Rol <span class="text-red-600">*</span>
+</x-input-label>
+                        <select id="id_rol" name="id_rol" required
                                 class="mt-1 block w-full border-gray-300 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300 rounded-md shadow-sm">
                             <option value="">Selecciona un rol</option>
                             @foreach ($roles as $rol)
