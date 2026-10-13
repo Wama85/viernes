@@ -4,9 +4,11 @@ namespace App\Modules\Clientes\Models;
 
 use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Model;
+use App\Modules\Auditoria\Auditable;
 
 class Cliente extends Model
 {
+     use Auditable;
     protected $table = 'clientes';
     protected $primaryKey = 'id_cliente';
 

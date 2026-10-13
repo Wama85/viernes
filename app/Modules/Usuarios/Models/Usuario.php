@@ -4,10 +4,11 @@ namespace App\Modules\Usuarios\Models;
 
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
+use App\Modules\Auditoria\Auditable;
 
 class Usuario extends Authenticatable
 {
-    use Notifiable;
+    use Auditable, Notifiable;
 
     protected $table = 'usuarios';
     protected $primaryKey = 'id_usuario';

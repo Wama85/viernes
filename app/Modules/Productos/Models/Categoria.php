@@ -4,9 +4,11 @@ namespace App\Modules\Productos\Models;
 
 use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Model;
+use App\Modules\Auditoria\Auditable;
 
 class Categoria extends Model
 {
+    use Auditable;
     protected $table = 'categorias';
     protected $primaryKey = 'id_categoria';
 
