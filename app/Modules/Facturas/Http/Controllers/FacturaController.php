@@ -7,6 +7,7 @@ use App\Modules\Cotizaciones\Models\Cotizacion;
 use App\Modules\Empresa\Models\Empresa;
 use App\Modules\Facturas\Http\Requests\FacturaRequest;
 use App\Modules\Facturas\Models\Factura;
+use App\Modules\Productos\Services\StockService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -14,6 +15,10 @@ use Illuminate\Validation\ValidationException;
 
 class FacturaController extends Controller
 {
+    public function __construct(private StockService $stock)
+    {
+    }
+
     public function index(Request $request)
     {
         $usuario = $request->user();
@@ -54,7 +59,7 @@ class FacturaController extends Controller
         $usuario = $request->user();
         $esAdmin = (int) $usuario->id_rol === 1;
 
-        $factura = DB::transaction(function () use ($request, $cotizacion, $usuario, $esAdmin) {
+        [$factura, $faltantes] = DB::transaction(function () use ($request, $cotizacion, $usuario, $esAdmin) {
             $bloqueada = Cotizacion::whereKey($cotizacion->getKey())->lockForUpdate()->firstOrFail();
 
             if ($motivo = $this->motivoBloqueo($bloqueada)) {
@@ -85,14 +90,20 @@ class FacturaController extends Controller
 
             $factura->detalles()->attach($items->pluck('id_cotizacion_detalle')->all());
 
-            return $factura;
+            // Aprobada desde el inicio: el stock se descuenta ahora
+            $faltantes = $esAdmin
+                ? $this->stock->descontar(StockService::DOC_FACTURA, $factura->id_factura, $items, $usuario->id_usuario)
+                : [];
+
+            return [$factura, $faltantes];
         });
 
         $mensaje = $factura->estado === Factura::APROBADA
             ? 'Factura registrada y aprobada. Queda pendiente de enviarse al SIN.'
             : 'Factura registrada. Queda pendiente de aprobación del administrador.';
 
-        return redirect()->route('facturas.show', $factura)->with('success', $mensaje);
+        return redirect()->route('facturas.show', $factura)
+            ->with('success', $mensaje . $this->stock->mensajeFaltantes($faltantes));
     }
 
     public function show(Factura $factura)
@@ -104,29 +115,37 @@ class FacturaController extends Controller
         return view('facturas.show', compact('factura'));
     }
 
-    /** Al aprobar se asigna el número consecutivo. */
+    /** Al aprobar se asigna el número consecutivo y se descuenta el stock. */
     public function aprobar(Request $request, Factura $factura)
     {
-        DB::transaction(function () use ($request, $factura) {
+        $idUsuario = $request->user()->id_usuario;
+
+        $faltantes = DB::transaction(function () use ($factura, $idUsuario) {
             $actual = Factura::whereKey($factura->getKey())->lockForUpdate()->firstOrFail();
 
             if ($actual->estado !== Factura::PENDIENTE) {
-                return;
+                return null;
             }
 
             $actual->update([
                 'numero'           => $this->siguienteNumero(),
                 'estado'           => Factura::APROBADA,
-                'id_aprobador'     => $request->user()->id_usuario,
+                'id_aprobador'     => $idUsuario,
                 'fecha_aprobacion' => now(),
             ]);
+
+            return $this->stock->descontar(StockService::DOC_FACTURA, $actual->id_factura, $actual->detalles, $idUsuario);
         });
 
-        return back()->with('success', 'Factura aprobada.');
+        if ($faltantes === null) {
+            return back()->with('error', 'Solo una factura pendiente puede aprobarse.');
+        }
+
+        return back()->with('success', 'Factura aprobada.' . $this->stock->mensajeFaltantes($faltantes));
     }
 
-    /** Anular libera los ítems. Una vez enviada al SIN, la anulación debe hacerse por el SIN. */
-    public function anular(Factura $factura)
+    /** Anular libera los ítems y devuelve el stock. Una vez enviada al SIN, la anulación debe hacerse por el SIN. */
+    public function anular(Request $request, Factura $factura)
     {
         if ($factura->estado === Factura::ANULADA) {
             return back()->with('error', 'La factura ya está anulada.');
@@ -136,7 +155,17 @@ class FacturaController extends Controller
             return back()->with('error', 'Esta factura ya fue enviada al SIN: debe anularse a través del SIN.');
         }
 
-        $factura->update(['estado' => Factura::ANULADA]);
+        $idUsuario = $request->user()->id_usuario;
+
+        DB::transaction(function () use ($factura, $idUsuario) {
+            $actual = Factura::whereKey($factura->getKey())->lockForUpdate()->firstOrFail();
+
+            if ($actual->estado === Factura::APROBADA) {
+                $this->stock->devolver(StockService::DOC_FACTURA, $actual->id_factura, $idUsuario, 'Anulación de la factura');
+            }
+
+            $actual->update(['estado' => Factura::ANULADA]);
+        });
 
         return back()->with('success', 'Factura anulada. Sus ítems quedaron disponibles.');
     }

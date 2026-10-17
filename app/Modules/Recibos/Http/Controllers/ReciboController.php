@@ -5,6 +5,8 @@ namespace App\Modules\Recibos\Http\Controllers;
 use App\Http\Controllers\Controller;
 use App\Modules\Cotizaciones\Models\Cotizacion;
 use App\Modules\Empresa\Models\Empresa;
+use App\Modules\Facturas\Models\Factura;
+use App\Modules\Productos\Services\StockService;
 use App\Modules\Recibos\Http\Requests\ReciboRequest;
 use App\Modules\Recibos\Models\Recibo;
 use App\Support\MontoEnLetras;
@@ -14,10 +16,13 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
-use App\Modules\Facturas\Models\Factura;
 
 class ReciboController extends Controller
 {
+    public function __construct(private StockService $stock)
+    {
+    }
+
     public function index(Request $request)
     {
         $usuario = $request->user();
@@ -63,7 +68,7 @@ class ReciboController extends Controller
         $usuario = $request->user();
         $esAdmin = (int) $usuario->id_rol === 1;
 
-        $recibo = DB::transaction(function () use ($request, $cotizacion, $usuario, $esAdmin) {
+        [$recibo, $faltantes] = DB::transaction(function () use ($request, $cotizacion, $usuario, $esAdmin) {
             // Se bloquea la cotización para que dos personas no tomen los mismos ítems
             $bloqueada = Cotizacion::whereKey($cotizacion->getKey())->lockForUpdate()->firstOrFail();
 
@@ -92,16 +97,25 @@ class ReciboController extends Controller
 
             $recibo->detalles()->attach($items->pluck('id_cotizacion_detalle')->all());
 
-            return $recibo;
+            // Aprobado desde el inicio: el stock se descuenta ahora
+            $faltantes = $esAdmin
+                ? $this->stock->descontar(StockService::DOC_RECIBO, $recibo->id_recibo, $items, $usuario->id_usuario)
+                : [];
+
+            return [$recibo, $faltantes];
         });
 
-        // Aprobado: directo al PDF
-        if ($recibo->estado === Recibo::APROBADO) {
+        // Aprobado y sin avisos de stock: directo al PDF
+        if ($recibo->estado === Recibo::APROBADO && empty($faltantes)) {
             return redirect()->route('recibos.pdf', $recibo);
         }
 
+        $mensaje = $recibo->estado === Recibo::APROBADO
+            ? 'Recibo emitido y aprobado.'
+            : 'Recibo emitido. Queda pendiente de aprobación del administrador.';
+
         return redirect()->route('recibos.show', $recibo)
-            ->with('success', 'Recibo emitido. Queda pendiente de aprobación del administrador.');
+            ->with('success', $mensaje . $this->stock->mensajeFaltantes($faltantes));
     }
 
     public function show(Recibo $recibo)
@@ -134,7 +148,9 @@ class ReciboController extends Controller
             return redirect()->route('recibos.show', $recibo)->with('error', 'Un recibo anulado no se puede editar.');
         }
 
-        DB::transaction(function () use ($request, $recibo) {
+        $idUsuario = $request->user()->id_usuario;
+
+        $faltantes = DB::transaction(function () use ($request, $recibo, $idUsuario) {
             $cotizacion = Cotizacion::whereKey($recibo->id_cotizacion)->lockForUpdate()->firstOrFail();
 
             $items = $this->resolverItems($cotizacion, $request->input('items'), $recibo);
@@ -146,34 +162,67 @@ class ReciboController extends Controller
             ]);
 
             $recibo->detalles()->sync($items->pluck('id_cotizacion_detalle')->all());
+
+            // Si ya estaba aprobado, el stock se recalcula con los ítems nuevos
+            if ($recibo->estado === Recibo::APROBADO) {
+                $this->stock->devolver(StockService::DOC_RECIBO, $recibo->id_recibo, $idUsuario, 'Edición del recibo');
+
+                return $this->stock->descontar(StockService::DOC_RECIBO, $recibo->id_recibo, $items, $idUsuario);
+            }
+
+            return [];
         });
 
-        return redirect()->route('recibos.show', $recibo)->with('success', 'Recibo actualizado.');
+        return redirect()->route('recibos.show', $recibo)
+            ->with('success', 'Recibo actualizado.' . $this->stock->mensajeFaltantes($faltantes));
     }
 
     public function aprobar(Request $request, Recibo $recibo)
     {
-        if ($recibo->estado !== Recibo::PENDIENTE) {
+        $idUsuario = $request->user()->id_usuario;
+
+        $faltantes = DB::transaction(function () use ($recibo, $idUsuario) {
+            $actual = Recibo::whereKey($recibo->getKey())->lockForUpdate()->firstOrFail();
+
+            if ($actual->estado !== Recibo::PENDIENTE) {
+                return null;
+            }
+
+            $actual->update([
+                'estado'           => Recibo::APROBADO,
+                'id_aprobador'     => $idUsuario,
+                'fecha_aprobacion' => now(),
+            ]);
+
+            // Al aprobarse, el stock baja
+            return $this->stock->descontar(StockService::DOC_RECIBO, $actual->id_recibo, $actual->detalles, $idUsuario);
+        });
+
+        if ($faltantes === null) {
             return back()->with('error', 'Solo un recibo pendiente puede aprobarse.');
         }
 
-        $recibo->update([
-            'estado'           => Recibo::APROBADO,
-            'id_aprobador'     => $request->user()->id_usuario,
-            'fecha_aprobacion' => now(),
-        ]);
-
-        return back()->with('success', 'Recibo aprobado.');
+        return back()->with('success', 'Recibo aprobado.' . $this->stock->mensajeFaltantes($faltantes));
     }
 
-    /** Al anular, sus ítems quedan libres para otro recibo. */
-    public function anular(Recibo $recibo)
+    /** Al anular, sus ítems quedan libres y el stock descontado se devuelve. */
+    public function anular(Request $request, Recibo $recibo)
     {
         if ($recibo->estado === Recibo::ANULADO) {
             return back()->with('error', 'El recibo ya está anulado.');
         }
 
-        $recibo->update(['estado' => Recibo::ANULADO]);
+        $idUsuario = $request->user()->id_usuario;
+
+        DB::transaction(function () use ($recibo, $idUsuario) {
+            $actual = Recibo::whereKey($recibo->getKey())->lockForUpdate()->firstOrFail();
+
+            if ($actual->estado === Recibo::APROBADO) {
+                $this->stock->devolver(StockService::DOC_RECIBO, $actual->id_recibo, $idUsuario, 'Anulación del recibo');
+            }
+
+            $actual->update(['estado' => Recibo::ANULADO]);
+        });
 
         return back()->with('success', 'Recibo anulado. Sus ítems quedaron disponibles.');
     }
@@ -245,7 +294,7 @@ class ReciboController extends Controller
             return 'La cotización aún no fue enviada al cliente.';
         }
         if ($cotizacion->detallesDisponibles()->isEmpty()) {
-            return 'Todos los ítems de esta cotización ya tienen recibo.';
+            return 'Todos los ítems de esta cotización ya tienen recibo o factura.';
         }
 
         return null;
@@ -277,7 +326,7 @@ class ReciboController extends Controller
 
         if ($items->count() !== count($ids)) {
             throw ValidationException::withMessages([
-                'items' => 'Hay ítems que no son válidos o que ya pertenecen a otro recibo.',
+                'items' => 'Hay ítems que no son válidos o que ya pertenecen a otro recibo o factura.',
             ]);
         }
 

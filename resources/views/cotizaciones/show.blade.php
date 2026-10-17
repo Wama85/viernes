@@ -18,9 +18,15 @@
         $facturado = $cotizacion->montoFacturado();
         $saldo = $cotizacion->saldo();
         $puedeEmitir = $cotizacion->puedeEmitirRecibo();
-        $puedeMarcarEnviada = $cotizacion->puedeMarcarEnviada();
         $reciboAnulado = \App\Modules\Recibos\Models\Recibo::ANULADO;
         $facturaAnulada = \App\Modules\Facturas\Models\Factura::ANULADA;
+
+        // Envío al cliente
+        $puedeEnviar = $cotizacion->estado === 'APROBADA' && $cotizacion->fecha_vencimiento->isFuture();
+        $correosEnvio = $cliente->correos->pluck('correo')
+            ->filter(fn ($c) => filter_var($c, FILTER_VALIDATE_EMAIL))
+            ->unique()->values();
+        $whatsappEnvio = \App\Support\Whatsapp::primero($cliente->telefonos->pluck('telefono'));
     @endphp
 
     <div class="py-8">
@@ -131,17 +137,65 @@
             </div>
 
             {{-- Envío al cliente --}}
-            @if ($puedeMarcarEnviada)
-                <form method="POST" action="{{ route('cotizaciones.enviada', $cotizacion) }}"
-                      class="bg-white dark:bg-gray-800 shadow sm:rounded-lg p-6 flex flex-wrap items-center gap-3 text-sm text-gray-700 dark:text-gray-300">
-                    @csrf @method('PATCH')
-                    <button type="submit" class="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700">
-                        Marcar como enviada al cliente
-                    </button>
-                    <span class="text-xs text-gray-500 dark:text-gray-400">
-                        Es necesario para poder emitir recibos o facturas.
-                    </span>
-                </form>
+            @if ($puedeEnviar)
+                <div class="bg-white dark:bg-gray-800 shadow sm:rounded-lg p-6 space-y-3 text-sm text-gray-700 dark:text-gray-300">
+                    <div class="flex flex-wrap items-center justify-between gap-2">
+                        <h3 class="font-semibold text-gray-900 dark:text-gray-100">Enviar al cliente</h3>
+                        @if (! $cotizacion->fueEnviada())
+                            <span class="text-xs text-gray-500 dark:text-gray-400">
+                                Es necesario para poder emitir recibos o facturas.
+                            </span>
+                        @else
+                            <span class="text-xs text-gray-500 dark:text-gray-400">Ya fue enviada; puedes reenviarla.</span>
+                        @endif
+                    </div>
+
+                    <div class="flex flex-wrap items-start gap-4">
+
+                        {{-- Correo --}}
+                        @if ($correosEnvio->isNotEmpty())
+                            <form method="POST" action="{{ route('cotizaciones.enviar.correo', $cotizacion) }}"
+                                  onsubmit="var b=this.querySelector('button'); b.disabled=true; b.textContent='Enviando...';">
+                                @csrf
+                                <button type="submit" class="px-4 py-2 bg-[#0c3082] text-white rounded-md hover:bg-[#0a2668]">
+                                    Enviar por correo
+                                </button>
+                                <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ $correosEnvio->join(', ') }}</p>
+                            </form>
+                        @endif
+
+                        {{-- WhatsApp --}}
+                        @if ($whatsappEnvio)
+                            <form method="POST" action="{{ route('cotizaciones.enviar.whatsapp', $cotizacion) }}"
+                                  target="_blank" onsubmit="setTimeout(function () { location.reload(); }, 1500);">
+                                @csrf
+                                <button type="submit" class="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700">
+                                    Enviar por WhatsApp
+                                </button>
+                                <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">+{{ $whatsappEnvio }}</p>
+                            </form>
+                        @endif
+
+                        {{-- Manual: PDF para enviarlo por otro medio --}}
+                        @if (! $cotizacion->fueEnviada())
+                            <form method="POST" action="{{ route('cotizaciones.enviar.manual', $cotizacion) }}"
+                                  target="_blank" onsubmit="setTimeout(function () { location.reload(); }, 1500);">
+                                @csrf
+                                <button type="submit" class="px-4 py-2 bg-gray-800 text-white rounded-md hover:bg-gray-700">
+                                    Descargar PDF y marcar como enviada
+                                </button>
+                                <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">Para enviarla tú por otro medio.</p>
+                            </form>
+                        @endif
+                    </div>
+
+                    @if ($correosEnvio->isEmpty() && ! $whatsappEnvio)
+                        <p class="text-xs text-yellow-700 dark:text-yellow-400">
+                            El cliente no tiene correo ni celular válido registrado. Descarga el PDF y envíalo manualmente,
+                            o completa sus datos en Clientes.
+                        </p>
+                    @endif
+                </div>
             @endif
 
             {{-- Totales --}}

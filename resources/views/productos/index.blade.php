@@ -10,7 +10,10 @@
         </div>
     </x-slot>
 
-    @php $esAdmin = auth()->user()->id_rol == 1; @endphp
+    @php
+        $esAdmin = auth()->user()->id_rol == 1;
+        $numero = fn ($n) => rtrim(rtrim(number_format((float) $n, 2, '.', ''), '0'), '.');
+    @endphp
 
     <div class="py-8">
         <div class="max-w-7xl mx-auto sm:px-6 lg:px-8 space-y-4">
@@ -61,8 +64,16 @@
                                     <td class="px-4 py-3 text-right">{{ number_format($producto->costo_compra, 2) }}</td>
                                 @endif
                                 <td class="px-4 py-3 text-right">{{ number_format($producto->precio_venta, 2) }}</td>
-                                <td class="px-4 py-3 text-right">
-                                    {{ $producto->controla_stock ? rtrim(rtrim(number_format($producto->stock, 2), '0'), '.') : '—' }}
+                                <td class="px-4 py-3 text-right whitespace-nowrap">
+                                    @if (! $producto->controla_stock)
+                                        —
+                                    @elseif ($producto->estaAgotado())
+                                        <span class="rounded bg-red-100 px-2 py-0.5 text-xs font-semibold text-red-800">Agotado</span>
+                                    @elseif ($producto->stockBajo())
+                                        <span class="rounded bg-yellow-100 px-2 py-0.5 text-xs font-semibold text-yellow-800">{{ $numero($producto->stock) }} · Bajo</span>
+                                    @else
+                                        {{ $numero($producto->stock) }}
+                                    @endif
                                 </td>
                                 <td class="px-4 py-3">
                                     @if ($producto->producto_estado)
@@ -74,6 +85,9 @@
                                 @if ($esAdmin)
                                     <td class="px-4 py-3 whitespace-nowrap">
                                         <a href="{{ route('productos.edit', $producto) }}" class="text-indigo-600 hover:underline">Editar</a>
+                                        @if ($producto->controla_stock)
+                                            <a href="{{ route('productos.movimientos', $producto) }}" class="ml-3 text-indigo-600 hover:underline">Stock</a>
+                                        @endif
                                         <form method="POST" action="{{ route('productos.cambiarEstado', $producto) }}" class="inline">
                                             @csrf
                                             @method('PATCH')

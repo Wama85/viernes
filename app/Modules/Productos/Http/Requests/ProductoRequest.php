@@ -24,6 +24,7 @@ class ProductoRequest extends FormRequest
             'precio_venta' => ['required', 'numeric', 'min:0'],
             'controla_stock' => ['nullable', 'boolean'],
             'stock' => ['nullable', 'numeric', 'min:0'],
+            'stock_minimo' => ['nullable', 'numeric', 'min:0'],
             'fecha_vencimiento' => ['nullable', 'date'],
         ];
     }
@@ -43,6 +44,8 @@ class ProductoRequest extends FormRequest
             'precio_venta.required' => 'El precio de venta es obligatorio.',
             'precio_venta.numeric' => 'El precio debe ser un número.',
             'precio_venta.min' => 'El precio no puede ser negativo.',
+            'stock.min' => 'El stock no puede ser negativo.',
+            'stock_minimo.min' => 'El stock mínimo no puede ser negativo.',
         ];
     }
 }

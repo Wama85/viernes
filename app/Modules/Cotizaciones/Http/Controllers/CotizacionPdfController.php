@@ -4,14 +4,16 @@ namespace App\Modules\Cotizaciones\Http\Controllers;
 
 use App\Http\Controllers\Controller;
 use App\Modules\Cotizaciones\Models\Cotizacion;
-use App\Modules\Empresa\Models\Empresa;
-use App\Support\MontoEnLetras;
-use App\Support\PdfAyudas;
-use Barryvdh\DomPDF\Facade\Pdf;
+use App\Modules\Cotizaciones\Services\CotizacionPdfService;
 use Illuminate\Http\Request;
 
 class CotizacionPdfController extends Controller
 {
+    public function __construct(private CotizacionPdfService $pdf)
+    {
+    }
+
+    /** PDF para el personal (requiere iniciar sesión). */
     public function __invoke(Request $request, Cotizacion $cotizacion)
     {
         $usuario = $request->user();
@@ -25,34 +27,17 @@ class CotizacionPdfController extends Controller
             return back()->with('error', 'El PDF solo está disponible para cotizaciones aprobadas.');
         }
 
-        $cotizacion->load(['cliente.tipoDocumento', 'detalles']);
+        return $this->pdf->generar($cotizacion)->stream($cotizacion->numero_completo . '.pdf');
+    }
 
-        $cliente = $cotizacion->cliente;
-        $empresa = Empresa::datos();
+    /** PDF para el cliente: se abre con el enlace firmado que va en el mensaje de WhatsApp. */
+    public function publico(Cotizacion $cotizacion)
+    {
+        abort_unless(
+            in_array($cotizacion->estado, [Cotizacion::APROBADA, Cotizacion::FACTURADA]),
+            404
+        );
 
-        $documento = $cliente->documento_identidad
-            . ($cliente->complemento ? '-' . $cliente->complemento : '');
-
-        $textoQr = implode("\n", [
-            'COTIZACIÓN ' . $cotizacion->numero_completo,
-            'CLIENTE: ' . $cliente->razon_social,
-            'NIT/DOC: ' . $documento,
-            'TOTAL: Bs ' . number_format($cotizacion->total, 2),
-            'VÁLIDA HASTA: ' . $cotizacion->fecha_vencimiento->format('d/m/Y H:i'),
-        ]);
-
-        $pdf = Pdf::loadView('cotizaciones.pdf', [
-            'cotizacion'   => $cotizacion,
-            'cliente'      => $cliente,
-            'documento'    => $documento,
-            'empresa'      => $empresa,
-            'logo'         => PdfAyudas::imagen($empresa->logo),
-            'sello'        => PdfAyudas::imagen($empresa->sello),
-            'qr'           => PdfAyudas::qr($textoQr),
-            'enLetras'     => MontoEnLetras::convertir((float) $cotizacion->total),
-            'conDescuento' => $cotizacion->detalles->sum('descuento') > 0,
-        ])->setPaper('a4');
-
-        return $pdf->stream($cotizacion->numero_completo . '.pdf');
+        return $this->pdf->generar($cotizacion)->stream($cotizacion->numero_completo . '.pdf');
     }
 }

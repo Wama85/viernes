@@ -23,6 +23,7 @@ class Producto extends Model
         'precio_venta',
         'controla_stock',
         'stock',
+        'stock_minimo',
         'fecha_vencimiento',
         'producto_estado',
     ];
@@ -55,5 +56,25 @@ class Producto extends Model
     public function unidadMedida()
     {
         return $this->belongsTo(UnidadMedida::class, 'id_unidad_medida', 'id_unidad_medida');
+    }
+
+    public function movimientos()
+    {
+        return $this->hasMany(MovimientoStock::class, 'id_producto', 'id_producto');
+    }
+
+    /** Controla stock y no queda nada. */
+    public function estaAgotado(): bool
+    {
+        return $this->controla_stock && (float) $this->stock <= 0;
+    }
+
+    /** Controla stock, aún queda, pero está en o por debajo del mínimo. */
+    public function stockBajo(): bool
+    {
+        return $this->controla_stock
+            && (float) $this->stock > 0
+            && (float) $this->stock_minimo > 0
+            && (float) $this->stock <= (float) $this->stock_minimo;
     }
 }

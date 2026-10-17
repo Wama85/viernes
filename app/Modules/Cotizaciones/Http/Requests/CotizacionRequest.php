@@ -2,6 +2,7 @@
 
 namespace App\Modules\Cotizaciones\Http\Requests;
 
+use App\Modules\Cotizaciones\Models\Cotizacion;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
@@ -17,19 +18,30 @@ class CotizacionRequest extends FormRequest
         // La vigencia es obligatoria al crear; al editar es opcional.
         $vigencia = $this->isMethod('post') ? 'required' : 'nullable';
 
-        return [
+        // Con recibos activos, los ítems quedan bloqueados y no se validan.
+        $cotizacion = $this->route('cotizacion');
+        $itemsBloqueados = $cotizacion instanceof Cotizacion && $cotizacion->tieneRecibos();
+
+        $reglas = [
             'id_cliente' => ['required', Rule::exists('clientes', 'id_cliente')->where('cliente_estado', 1)],
             'vigencia_cantidad' => [$vigencia, 'integer', 'min:1', 'max:365'],
             'vigencia_unidad' => [$vigencia, Rule::in(['HORAS', 'DIAS'])],
             'observaciones' => ['nullable', 'string', 'max:2000'],
-
-            'items' => ['required', 'array', 'min:1'],
-            'items.*.id_producto' => ['required', Rule::exists('productos', 'id_producto')->where('producto_estado', 1)],
-            'items.*.cantidad' => ['required', 'numeric', 'gt:0'],
-            'items.*.precio_unitario' => ['required', 'numeric', 'min:0'],
-            'items.*.descuento' => ['nullable', 'numeric', 'min:0'],
-            'items.*.descripcion_adicional' => ['nullable', 'string', 'max:1000'],
+            'confirmar_stock' => ['nullable', 'boolean'],
         ];
+
+        if (! $itemsBloqueados) {
+            $reglas += [
+                'items' => ['required', 'array', 'min:1'],
+                'items.*.id_producto' => ['required', Rule::exists('productos', 'id_producto')->where('producto_estado', 1)],
+                'items.*.cantidad' => ['required', 'numeric', 'gt:0'],
+                'items.*.precio_unitario' => ['required', 'numeric', 'min:0'],
+                'items.*.descuento' => ['nullable', 'numeric', 'min:0'],
+                'items.*.descripcion_adicional' => ['nullable', 'string', 'max:1000'],
+            ];
+        }
+
+        return $reglas;
     }
 
     public function messages(): array

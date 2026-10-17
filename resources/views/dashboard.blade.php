@@ -51,6 +51,37 @@
                 </div>
             </div>
 
+            {{-- Alerta de stock --}}
+            @if ($stockAlertas['total'] > 0)
+                <div class="rounded-lg border border-yellow-300 bg-yellow-50 p-5 dark:border-yellow-700 dark:bg-gray-800">
+                    <div class="mb-3 flex items-center justify-between">
+                        <h3 class="font-semibold text-yellow-900 dark:text-yellow-200">Productos con stock bajo o agotado</h3>
+                        <span class="rounded-full bg-yellow-200 px-2 py-0.5 text-xs font-semibold text-yellow-900">{{ $stockAlertas['total'] }}</span>
+                    </div>
+                    <ul class="grid grid-cols-1 gap-x-6 gap-y-1 text-sm md:grid-cols-2">
+                        @foreach ($stockAlertas['lista'] as $p)
+                            <li class="flex items-center justify-between gap-3 text-gray-700 dark:text-gray-300">
+                                <span class="truncate">
+                                    @if ($esAdmin)
+                                        <a href="{{ route('productos.movimientos', $p) }}" class="hover:underline">{{ $p->descripcion_producto }}</a>
+                                    @else
+                                        {{ $p->descripcion_producto }}
+                                    @endif
+                                </span>
+                                @if ($p->estaAgotado())
+                                    <span class="rounded bg-red-100 px-2 py-0.5 text-xs font-semibold text-red-800">Agotado</span>
+                                @else
+                                    <span class="rounded bg-yellow-200 px-2 py-0.5 text-xs font-semibold text-yellow-900">{{ rtrim(rtrim(number_format((float) $p->stock, 2, '.', ''), '0'), '.') }}</span>
+                                @endif
+                            </li>
+                        @endforeach
+                    </ul>
+                    @if ($stockAlertas['total'] > 6)
+                        <p class="mt-2 text-xs text-gray-500">y {{ $stockAlertas['total'] - 6 }} más…</p>
+                    @endif
+                </div>
+            @endif
+
             {{-- Pendientes de aprobación (solo administrador) --}}
             @if ($esAdmin)
                 <div>

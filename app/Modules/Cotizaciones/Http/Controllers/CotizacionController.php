@@ -7,6 +7,7 @@ use App\Modules\Clientes\Models\Cliente;
 use App\Modules\Cotizaciones\Http\Requests\CotizacionRequest;
 use App\Modules\Cotizaciones\Models\Cotizacion;
 use App\Modules\Productos\Models\Producto;
+use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
@@ -39,6 +40,12 @@ class CotizacionController extends Controller
     {
         // Primero se calculan las líneas y el total; si algo falla, no se toca la base.
         [$filas, $total] = $this->prepararDetalles($request->items);
+
+        // Stock insuficiente: se avisa y se pide confirmación (no bloquea).
+        if ($aviso = $this->advertirStock($request, $filas)) {
+            return $aviso;
+        }
+
         $esAdmin = $this->esAdmin();
 
         $cotizacion = DB::transaction(function () use ($request, $filas, $total, $esAdmin) {
@@ -74,7 +81,8 @@ class CotizacionController extends Controller
 
         $cotizacion->load([
             'cliente.tipoDocumento', 'cliente.correos', 'cliente.telefonos',
-            'detalles.unidadMedida', 'creador', 'aprobador',
+            'detalles.unidadMedida', 'detalles.recibos', 'detalles.facturas',
+            'creador', 'aprobador',
         ]);
 
         return view('cotizaciones.show', compact('cotizacion'));
@@ -89,7 +97,7 @@ class CotizacionController extends Controller
                 ->with('error', 'Esta cotización ya no se puede modificar.');
         }
 
-        $cotizacion->load('detalles');
+        $cotizacion->load('detalles.unidadMedida');
 
         return view('cotizaciones.edit', array_merge(
             $this->datosFormulario(),
@@ -106,20 +114,30 @@ class CotizacionController extends Controller
                 ->with('error', 'Esta cotización ya no se puede modificar.');
         }
 
-        [$filas, $total] = $this->prepararDetalles($request->items);
-        $recibido = $cotizacion->montoRecibido();
-if ($total < $recibido) {
-    throw ValidationException::withMessages([
-        'items' => 'El total no puede ser menor a lo ya recibido (Bs ' . number_format($recibido, 2) . ').',
-    ]);
-}
+        // Con recibos activos los ítems no se tocan: solo cliente, vigencia y observaciones.
+        $itemsBloqueados = $cotizacion->tieneRecibos();
+        $filas = [];
+        $total = (float) $cotizacion->total;
 
-        DB::transaction(function () use ($request, $cotizacion, $filas, $total) {
+        if (! $itemsBloqueados) {
+            [$filas, $total] = $this->prepararDetalles($request->items);
+
+            if ($aviso = $this->advertirStock($request, $filas)) {
+                return $aviso;
+            }
+        }
+
+        DB::transaction(function () use ($request, $cotizacion, $filas, $total, $itemsBloqueados) {
             $datos = [
                 'id_cliente'    => $request->id_cliente,
                 'observaciones' => $request->observaciones,
-                'total'         => $total,
             ];
+
+            if (! $itemsBloqueados) {
+                $datos['total'] = $total;
+                // Si cambian los ítems, el cliente debe recibir la cotización de nuevo.
+                $datos['fecha_envio'] = null;
+            }
 
             if ($request->filled('vigencia_cantidad')) {
                 $datos['fecha_vencimiento'] = $this->calcularVencimiento($request);
@@ -132,11 +150,13 @@ if ($total < $recibido) {
                 $datos['fecha_aprobacion'] = null;
             }
 
-            $cotizacion->update($datos);
+            $cotizacion->forceFill($datos)->save();
 
-            // Las líneas se reemplazan completas.
-            $cotizacion->detalles()->delete();
-            $cotizacion->detalles()->createMany($filas);
+            if (! $itemsBloqueados) {
+                // Las líneas se reemplazan completas (sin recibos que dependan de ellas).
+                $cotizacion->detalles()->delete();
+                $cotizacion->detalles()->createMany($filas);
+            }
         });
 
         return redirect()->route('cotizaciones.show', $cotizacion)
@@ -163,9 +183,11 @@ if ($total < $recibido) {
         if (in_array($cotizacion->estado, [Cotizacion::FACTURADA, Cotizacion::ANULADA])) {
             return back()->with('error', 'Esta cotización no se puede anular.');
         }
-if ($cotizacion->tieneRecibos()) {
-    return back()->with('error', 'Primero debe anular los recibos de esta cotización.');
-}
+
+        if ($cotizacion->tieneRecibos() || $cotizacion->tieneFacturas()) {
+            return back()->with('error', 'Primero debe anular los recibos y facturas de esta cotización.');
+        }
+
         $cotizacion->update(['estado' => Cotizacion::ANULADA]);
 
         return back()->with('success', "Cotización {$cotizacion->numero_completo} anulada.");
@@ -177,8 +199,6 @@ if ($cotizacion->tieneRecibos()) {
     {
         return Auth::user()->id_rol == 1;
     }
-
-
 
     /** El Vendedor solo accede a sus propias cotizaciones. */
     private function verificarPropiedad(Cotizacion $cotizacion): void
@@ -208,6 +228,53 @@ if ($cotizacion->tieneRecibos()) {
                 ->orderBy('descripcion_producto')
                 ->get(),
         ];
+    }
+
+    /**
+     * Si algún producto con control de stock no alcanza, vuelve al formulario con un aviso.
+     * El usuario puede continuar de todas formas (confirmar_stock).
+     */
+    private function advertirStock(Request $request, array $filas): ?RedirectResponse
+    {
+        if ($request->boolean('confirmar_stock')) {
+            return null;
+        }
+
+        $faltantes = $this->stockInsuficiente($filas);
+
+        if (empty($faltantes)) {
+            return null;
+        }
+
+        return back()->withInput()->with('advertencia_stock', $faltantes);
+    }
+
+    private function stockInsuficiente(array $filas): array
+    {
+        $pedidos = collect($filas)
+            ->groupBy('id_producto')
+            ->map(fn ($lineas) => (float) $lineas->sum('cantidad'));
+
+        $faltantes = [];
+
+        $productos = Producto::whereIn('id_producto', $pedidos->keys())
+            ->where('controla_stock', true)
+            ->get();
+
+        foreach ($productos as $producto) {
+            $pedido = $pedidos[$producto->id_producto];
+            $disponible = (float) $producto->stock;
+
+            if ($pedido > $disponible) {
+                $faltantes[] = [
+                    'producto'   => $producto->descripcion_producto,
+                    'pedido'     => $pedido,
+                    'disponible' => $disponible,
+                ];
+            }
+        }
+
+        return $faltantes;
     }
 
     /**

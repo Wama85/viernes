@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Modules\Cotizaciones\Models\Cotizacion;
 use App\Modules\Facturas\Models\Factura;
+use App\Modules\Productos\Models\Producto;
 use App\Modules\Recibos\Models\Recibo;
 use Illuminate\Http\Request;
 
@@ -49,6 +50,17 @@ class DashboardController extends Controller
                 ->sum('monto'),
         ];
 
+        // Productos agotados o en/bajo su stock mínimo
+        $productosAlerta = Producto::query()
+            ->where('producto_estado', 1)
+            ->where('controla_stock', true)
+            ->whereColumn('stock', '<=', 'stock_minimo');
+
+        $stockAlertas = [
+            'total' => (clone $productosAlerta)->count(),
+            'lista' => (clone $productosAlerta)->orderBy('stock')->limit(6)->get(),
+        ];
+
         $pendientes = null;
 
         if ($esAdmin) {
@@ -73,6 +85,6 @@ class DashboardController extends Controller
             ];
         }
 
-        return view('dashboard', compact('tarjetas', 'pendientes', 'esAdmin'));
+        return view('dashboard', compact('tarjetas', 'pendientes', 'esAdmin', 'stockAlertas'));
     }
 }

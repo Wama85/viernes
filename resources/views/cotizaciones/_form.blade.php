@@ -1,6 +1,8 @@
 @php
     $c = $cotizacion ?? null;
+    $bloqueoItems = $c && $c->tieneRecibos();
     $inputClase = 'block mt-1 w-full rounded-md border-gray-300 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300 shadow-sm';
+    $num = fn ($n) => rtrim(rtrim(number_format((float) $n, 2, '.', ''), '0'), '.');
 
     $listaClientes = $clientes->map(fn ($x) => [
         'id'    => $x->id_cliente,
@@ -12,6 +14,7 @@
         'descripcion' => $p->descripcion_producto,
         'unidad'      => $p->unidadMedida->nombre_unidad_medida,
         'precio'      => (float) $p->precio_venta,
+        'stock'       => $p->controla_stock ? (float) $p->stock : null,
     ])->values();
 
     $lineaVacia = ['id_producto' => '', 'cantidad' => 1, 'precio_unitario' => '', 'descuento' => 0, 'descripcion_adicional' => ''];
@@ -44,6 +47,25 @@
                 <li>{{ $error }}</li>
             @endforeach
         </ul>
+    </div>
+@endif
+
+{{-- Aviso de stock insuficiente (no bloquea) --}}
+@if (session('advertencia_stock'))
+    <div class="rounded-md border border-yellow-300 bg-yellow-50 p-4 text-sm text-yellow-900">
+        <p class="font-semibold">Stock insuficiente</p>
+        <ul class="mt-1 ml-5 list-disc">
+            @foreach (session('advertencia_stock') as $f)
+                <li>{{ $f['producto'] }}: pides {{ $num($f['pedido']) }} y hay {{ $num($f['disponible']) }}.</li>
+            @endforeach
+        </ul>
+        <p class="mt-2">
+            Puedes guardar la cotización igual. El stock se descuenta recién cuando se aprueba un recibo o una factura.
+        </p>
+        <button type="submit" name="confirmar_stock" value="1"
+                class="mt-3 rounded-md bg-yellow-600 px-4 py-2 font-semibold text-white hover:bg-yellow-700">
+            Continuar de todas formas
+        </button>
     </div>
 @endif
 
@@ -98,65 +120,109 @@
     {{-- Líneas --}}
     <div>
         <h3 class="text-sm font-medium text-gray-700 dark:text-gray-300">
-            Productos y servicios <span class="text-red-600">*</span>
+            Productos y servicios @unless ($bloqueoItems)<span class="text-red-600">*</span>@endunless
         </h3>
 
-        <div class="space-y-3 mt-2">
-            <template x-for="(it, i) in items" :key="i">
-                <div class="border dark:border-gray-700 rounded-md p-3 space-y-3">
-                    <div class="grid grid-cols-1 md:grid-cols-12 gap-3">
-                        <div class="md:col-span-5">
-                            <label class="block text-xs text-gray-600 dark:text-gray-400">Producto</label>
-                            <select :name="'items[' + i + '][id_producto]'" x-model="it.id_producto"
-                                    @change="elegirProducto(i)" required class="{{ $inputClase }}">
-                                <option value="">-- Seleccione --</option>
-                                <template x-for="p in productos" :key="p.id">
-                                    <option :value="p.id" :selected="p.id == it.id_producto" x-text="p.descripcion"></option>
+        @if ($bloqueoItems)
+            {{-- Con recibos emitidos, los ítems no se modifican --}}
+            <div class="mt-2 rounded-md border border-yellow-300 bg-yellow-50 p-3 text-sm text-yellow-900">
+                Esta cotización ya tiene recibos emitidos: sus ítems no se pueden modificar.
+                Solo puedes cambiar el cliente, la vigencia y las observaciones.
+            </div>
+
+            <div class="mt-3 overflow-x-auto">
+                <table class="min-w-full text-sm text-gray-700 dark:text-gray-300">
+                    <thead class="bg-gray-50 dark:bg-gray-700 text-left">
+                        <tr>
+                            <th class="px-3 py-2">Descripción</th>
+                            <th class="px-3 py-2 text-right">Cant.</th>
+                            <th class="px-3 py-2 text-right">Precio</th>
+                            <th class="px-3 py-2 text-right">Desc.</th>
+                            <th class="px-3 py-2 text-right">Subtotal</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach ($c->detalles as $d)
+                            <tr class="border-t dark:border-gray-700">
+                                <td class="px-3 py-2">{{ $d->descripcion }}</td>
+                                <td class="px-3 py-2 text-right">{{ $num($d->cantidad) }}</td>
+                                <td class="px-3 py-2 text-right">{{ number_format($d->precio_unitario, 2) }}</td>
+                                <td class="px-3 py-2 text-right">{{ number_format($d->descuento, 2) }}</td>
+                                <td class="px-3 py-2 text-right">{{ number_format($d->subtotal, 2) }}</td>
+                            </tr>
+                        @endforeach
+                    </tbody>
+                    <tfoot>
+                        <tr class="border-t dark:border-gray-700 font-bold">
+                            <td colspan="4" class="px-3 py-2 text-right">TOTAL (Bs)</td>
+                            <td class="px-3 py-2 text-right">{{ number_format($c->total, 2) }}</td>
+                        </tr>
+                    </tfoot>
+                </table>
+            </div>
+        @else
+            <div class="space-y-3 mt-2">
+                <template x-for="(it, i) in items" :key="i">
+                    <div class="border dark:border-gray-700 rounded-md p-3 space-y-3">
+                        <div class="grid grid-cols-1 md:grid-cols-12 gap-3">
+                            <div class="md:col-span-5">
+                                <label class="block text-xs text-gray-600 dark:text-gray-400">Producto</label>
+                                <select :name="'items[' + i + '][id_producto]'" x-model="it.id_producto"
+                                        @change="elegirProducto(i)" required class="{{ $inputClase }}">
+                                    <option value="">-- Seleccione --</option>
+                                    <template x-for="p in productos" :key="p.id">
+                                        <option :value="p.id" :selected="p.id == it.id_producto" x-text="p.descripcion"></option>
+                                    </template>
+                                </select>
+                            </div>
+                            <div class="md:col-span-2">
+                                <label class="block text-xs text-gray-600 dark:text-gray-400">
+                                    Cantidad <span x-text="producto(it.id_producto) ? '(' + producto(it.id_producto).unidad + ')' : ''"></span>
+                                </label>
+                                <input type="number" step="0.01" min="0.01" :name="'items[' + i + '][cantidad]'"
+                                       x-model="it.cantidad" required class="{{ $inputClase }}">
+                                <template x-if="stockDe(it.id_producto) !== null">
+                                    <p class="mt-1 text-xs"
+                                       :class="sinStock(it) ? 'font-semibold text-yellow-700' : 'text-gray-500'"
+                                       x-text="sinStock(it) ? 'Stock insuficiente: hay ' + fmtNum(stockDe(it.id_producto)) : 'Stock: ' + fmtNum(stockDe(it.id_producto))"></p>
                                 </template>
-                            </select>
+                            </div>
+                            <div class="md:col-span-2">
+                                <label class="block text-xs text-gray-600 dark:text-gray-400">Precio (Bs)</label>
+                                <input type="number" step="0.01" min="0" :name="'items[' + i + '][precio_unitario]'"
+                                       x-model="it.precio_unitario" required class="{{ $inputClase }}">
+                            </div>
+                            <div class="md:col-span-1">
+                                <label class="block text-xs text-gray-600 dark:text-gray-400">Desc.</label>
+                                <input type="number" step="0.01" min="0" :name="'items[' + i + '][descuento]'"
+                                       x-model="it.descuento" class="{{ $inputClase }}">
+                            </div>
+                            <div class="md:col-span-2">
+                                <label class="block text-xs text-gray-600 dark:text-gray-400">Subtotal</label>
+                                <p class="mt-2 font-semibold text-gray-800 dark:text-gray-200" x-text="fmt(subtotal(it))"></p>
+                            </div>
                         </div>
-                        <div class="md:col-span-2">
-                            <label class="block text-xs text-gray-600 dark:text-gray-400">
-                                Cantidad <span x-text="producto(it.id_producto) ? '(' + producto(it.id_producto).unidad + ')' : ''"></span>
-                            </label>
-                            <input type="number" step="0.01" min="0.01" :name="'items[' + i + '][cantidad]'"
-                                   x-model="it.cantidad" required class="{{ $inputClase }}">
-                        </div>
-                        <div class="md:col-span-2">
-                            <label class="block text-xs text-gray-600 dark:text-gray-400">Precio (Bs)</label>
-                            <input type="number" step="0.01" min="0" :name="'items[' + i + '][precio_unitario]'"
-                                   x-model="it.precio_unitario" required class="{{ $inputClase }}">
-                        </div>
-                        <div class="md:col-span-1">
-                            <label class="block text-xs text-gray-600 dark:text-gray-400">Desc.</label>
-                            <input type="number" step="0.01" min="0" :name="'items[' + i + '][descuento]'"
-                                   x-model="it.descuento" class="{{ $inputClase }}">
-                        </div>
-                        <div class="md:col-span-2">
-                            <label class="block text-xs text-gray-600 dark:text-gray-400">Subtotal</label>
-                            <p class="mt-2 font-semibold text-gray-800 dark:text-gray-200" x-text="fmt(subtotal(it))"></p>
+
+                        <div class="flex gap-3 items-end">
+                            <div class="flex-1">
+                                <label class="block text-xs text-gray-600 dark:text-gray-400">Descripción adicional (opcional)</label>
+                                <input type="text" maxlength="1000" :name="'items[' + i + '][descripcion_adicional]'"
+                                       x-model="it.descripcion_adicional" class="{{ $inputClase }} uppercase">
+                            </div>
+                            <button type="button" @click="quitar(i)" x-show="items.length > 1"
+                                    class="text-sm text-red-600 hover:underline">Quitar</button>
                         </div>
                     </div>
+                </template>
+            </div>
 
-                    <div class="flex gap-3 items-end">
-                        <div class="flex-1">
-                            <label class="block text-xs text-gray-600 dark:text-gray-400">Descripción adicional (opcional)</label>
-                            <input type="text" maxlength="1000" :name="'items[' + i + '][descripcion_adicional]'"
-                                   x-model="it.descripcion_adicional" class="{{ $inputClase }} uppercase">
-                        </div>
-                        <button type="button" @click="quitar(i)" x-show="items.length > 1"
-                                class="text-sm text-red-600 hover:underline">Quitar</button>
-                    </div>
-                </div>
-            </template>
-        </div>
+            <button type="button" @click="agregar()"
+                    class="mt-3 text-sm text-indigo-600 hover:underline">+ Agregar otra línea</button>
 
-        <button type="button" @click="agregar()"
-                class="mt-3 text-sm text-indigo-600 hover:underline">+ Agregar otra línea</button>
-
-        <p class="mt-4 text-right text-lg font-bold text-gray-800 dark:text-gray-200">
-            Total: Bs <span x-text="fmt(total)"></span>
-        </p>
+            <p class="mt-4 text-right text-lg font-bold text-gray-800 dark:text-gray-200">
+                Total: Bs <span x-text="fmt(total)"></span>
+            </p>
+        @endif
     </div>
 
     {{-- Observaciones --}}
@@ -194,6 +260,24 @@
                 return this.productos.find(p => p.id == id);
             },
 
+            // Stock disponible del producto; null si no controla stock o no hay producto
+            stockDe(id) {
+                const p = this.producto(id);
+                return p && p.stock !== null && p.stock !== undefined ? p.stock : null;
+            },
+
+            // Cantidad total pedida del mismo producto (suma todas las líneas)
+            pedidoDe(id) {
+                return this.items
+                    .filter(x => x.id_producto == id)
+                    .reduce((suma, x) => suma + (parseFloat(x.cantidad) || 0), 0);
+            },
+
+            sinStock(it) {
+                const disponible = this.stockDe(it.id_producto);
+                return disponible !== null && this.pedidoDe(it.id_producto) > disponible;
+            },
+
             agregar() {
                 this.items.push({ id_producto: '', cantidad: 1, precio_unitario: '', descuento: 0, descripcion_adicional: '' });
             },
@@ -217,6 +301,10 @@
 
             fmt(n) {
                 return n.toLocaleString('es-BO', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+            },
+
+            fmtNum(n) {
+                return Number(n).toLocaleString('es-BO', { maximumFractionDigits: 2 });
             },
         }));
     });

@@ -24,7 +24,13 @@
         .items th, .items td { border: 1px solid #000; padding: 4px 5px; }
         .items th { text-align: center; background: #f1f1f1; }
         .items .sin-borde { border: none; }
+        .items tr { page-break-inside: avoid; }
         .detalle-extra { font-size: 8px; color: #555; }
+
+        /* Encabezado de grupo (categoría) */
+        .items td.grupo { background: #e6ecf7; color: #0c3082; font-weight: bold; font-size: 10px; }
+        .items td.sangria { padding-left: 14px; }
+        .items td.subtotal-grupo { font-size: 9px; font-style: italic; color: #333; }
 
         .son { margin-top: 10px; font-size: 11px; }
         .validez { margin-top: 6px; font-size: 9px; color: #0c3082; font-weight: bold; }
@@ -39,6 +45,33 @@
     </style>
 </head>
 <body>
+
+    @php
+        // Pon true para mostrar una fila de subtotal al final de cada grupo.
+        $subtotalPorGrupo = false;
+
+        // Total de columnas de la tabla (Cant., Detalle, Precio U., [Desc.], Sub Total).
+        $columnas = $conDescuento ? 5 : 4;
+
+        // Título del grupo: la categoría real del producto; si no la hay, la descripción de la línea.
+        $tituloDe = fn ($d) => mb_strtoupper(trim((string) ($d->producto?->categoria?->nombre_categoria ?: $d->descripcion)));
+
+        // Agrupa las líneas por categoría, respetando el orden de aparición en la cotización.
+        $grupos = $cotizacion->detalles->values()->groupBy($tituloDe);
+
+        // Texto principal y texto pequeño de cada línea. Si la descripción repite el título
+        // del grupo, se muestra directamente el detalle específico.
+        $textoLinea = function ($d, $tituloGrupo) {
+            $desc = trim((string) $d->descripcion);
+            $adic = trim((string) $d->descripcion_adicional);
+
+            if ($adic !== '' && mb_strtoupper($desc) === $tituloGrupo) {
+                return [$adic, null];
+            }
+
+            return [$desc, $adic !== '' ? $adic : null];
+        };
+    @endphp
 
     {{-- Pie de página --}}
     <div class="footer">
@@ -97,22 +130,47 @@
             </tr>
         </thead>
         <tbody>
-            @foreach ($cotizacion->detalles as $detalle)
-                <tr>
-                    <td class="c">{{ rtrim(rtrim(number_format($detalle->cantidad, 2), '0'), '.') }}</td>
-                    <td>
-                        {{ $detalle->descripcion }}
-                        @if ($detalle->descripcion_adicional)
-                            <div class="detalle-extra">{{ $detalle->descripcion_adicional }}</div>
+            @foreach ($grupos as $tituloGrupo => $lineas)
+                @php
+                    // Una categoría con una sola línea cuya descripción ya es el título no necesita encabezado.
+                    $conEncabezado = $lineas->count() > 1
+                        || mb_strtoupper(trim((string) $lineas->first()->descripcion)) !== $tituloGrupo;
+                @endphp
+
+                {{-- Título del grupo: sale una sola vez --}}
+                @if ($conEncabezado)
+                    <tr>
+                        <td colspan="{{ $columnas }}" class="grupo">{{ $tituloGrupo }}</td>
+                    </tr>
+                @endif
+
+                @foreach ($lineas as $detalle)
+                    @php [$principal, $extra] = $textoLinea($detalle, $tituloGrupo); @endphp
+                    <tr>
+                        <td class="c">{{ rtrim(rtrim(number_format($detalle->cantidad, 2), '0'), '.') }}</td>
+                        <td @class(['sangria' => $conEncabezado])>
+                            {{ $principal }}
+                            @if ($extra)
+                                <div class="detalle-extra">{{ $extra }}</div>
+                            @endif
+                        </td>
+                        <td class="c">{{ number_format($detalle->precio_unitario, 2) }}</td>
+                        @if ($conDescuento)
+                            <td class="c">{{ number_format($detalle->descuento, 2) }}</td>
                         @endif
-                    </td>
-                    <td class="c">{{ number_format($detalle->precio_unitario, 2) }}</td>
-                    @if ($conDescuento)
-                        <td class="c">{{ number_format($detalle->descuento, 2) }}</td>
-                    @endif
-                    <td class="c">{{ number_format($detalle->subtotal, 2) }}</td>
-                </tr>
+                        <td class="c">{{ number_format($detalle->subtotal, 2) }}</td>
+                    </tr>
+                @endforeach
+
+                {{-- Subtotal del grupo (opcional) --}}
+                @if ($conEncabezado && $subtotalPorGrupo)
+                    <tr>
+                        <td colspan="{{ $columnas - 1 }}" class="r subtotal-grupo">Subtotal {{ $tituloGrupo }}:</td>
+                        <td class="c subtotal-grupo">{{ number_format($lineas->sum('subtotal'), 2) }}</td>
+                    </tr>
+                @endif
             @endforeach
+
             <tr>
                 <td colspan="{{ $conDescuento ? 4 : 3 }}" class="r b sin-borde" style="font-size: 11px;">TOTAL (Bs):</td>
                 <td class="c b" style="font-size: 11px;">{{ number_format($cotizacion->total, 2) }}</td>
