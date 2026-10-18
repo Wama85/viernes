@@ -2,10 +2,13 @@
 
 namespace App\Modules\Productos\Http\Requests;
 
+use App\Modules\Productos\Http\Requests\Concerns\ReglasCategoria;
 use Illuminate\Foundation\Http\FormRequest;
 
 class StoreCategoriaRequest extends FormRequest
 {
+    use ReglasCategoria;
+
     public function authorize(): bool
     {
         return true;
@@ -13,16 +16,6 @@ class StoreCategoriaRequest extends FormRequest
 
     public function rules(): array
     {
-        return [
-            'nombre_categoria' => ['required', 'string', 'max:100', 'unique:categorias,nombre_categoria'],
-        ];
-    }
-
-    public function messages(): array
-    {
-        return [
-            'nombre_categoria.required' => 'El nombre de la categoría es obligatorio.',
-            'nombre_categoria.unique' => 'Ya existe una categoría con este nombre.',
-        ];
+        return $this->reglasCategoria();
     }
 }

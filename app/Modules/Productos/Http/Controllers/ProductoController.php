@@ -104,9 +104,12 @@ class ProductoController extends Controller
 
         return [
             'opcionesSin' => $this->opcionesProductoSin($idElegido),
+            // Al editar se incluye la categoría y la unidad actuales aunque estén dadas de baja.
             'categorias' => Categoria::where('categoria_estado', 1)
+                ->when($producto, fn ($q) => $q->orWhere('id_categoria', $producto->id_categoria))
                 ->orderBy('nombre_categoria')->get(),
             'unidades' => UnidadMedida::where('unidad_medida_estado', 1)
+                ->when($producto, fn ($q) => $q->orWhere('id_unidad_medida', $producto->id_unidad_medida))
                 ->orderBy('nombre_unidad_medida')->get(),
             'unidadPorDefecto' => UnidadMedida::where('nombre_unidad_medida', 'PIEZAS')
                 ->value('id_unidad_medida'),

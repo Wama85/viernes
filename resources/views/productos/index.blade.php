@@ -55,6 +55,13 @@
                     </thead>
                     <tbody>
                         @forelse ($productos as $producto)
+                            @php
+                                $activo = (bool) $producto->producto_estado;
+                                $titulo = $activo ? 'Dar de baja el producto' : 'Reactivar el producto';
+                                $texto = $activo
+                                    ? 'Vas a dar de baja «' . $producto->descripcion_producto . '». Podrás reactivarlo cuando quieras.'
+                                    : 'Vas a reactivar «' . $producto->descripcion_producto . '».';
+                            @endphp
                             <tr class="border-t dark:border-gray-700">
                                 <td class="px-4 py-3">{{ $producto->id_producto }}</td>
                                 <td class="px-4 py-3">{{ $producto->descripcion_producto }}</td>
@@ -76,7 +83,7 @@
                                     @endif
                                 </td>
                                 <td class="px-4 py-3">
-                                    @if ($producto->producto_estado)
+                                    @if ($activo)
                                         <span class="text-green-600">Activo</span>
                                     @else
                                         <span class="text-red-600">De baja</span>
@@ -91,8 +98,16 @@
                                         <form method="POST" action="{{ route('productos.cambiarEstado', $producto) }}" class="inline">
                                             @csrf
                                             @method('PATCH')
-                                            <button type="submit" class="ml-3 text-red-600 hover:underline">
-                                                {{ $producto->producto_estado ? 'Dar de baja' : 'Reactivar' }}
+                                            <button type="button"
+                                                    class="ml-3 {{ $activo ? 'text-red-600' : 'text-green-600' }} hover:underline"
+                                                    @click="$dispatch('confirmar-accion', {
+                                                        form: $el.closest('form'),
+                                                        titulo: @js($titulo),
+                                                        texto: @js($texto),
+                                                        boton: @js($activo ? 'Dar de baja' : 'Reactivar'),
+                                                        peligro: {{ $activo ? 'true' : 'false' }}
+                                                    })">
+                                                {{ $activo ? 'Dar de baja' : 'Reactivar' }}
                                             </button>
                                         </form>
                                     </td>
@@ -108,4 +123,6 @@
             {{ $productos->links() }}
         </div>
     </div>
+
+    <x-modal-confirmacion />
 </x-app-layout>

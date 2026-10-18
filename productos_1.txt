@@ -1,0 +1,235 @@
+﻿<?php
+
+namespace App\Modules\Productos\Http\Requests;
+
+use Illuminate\Foundation\Http\FormRequest;
+
+class ProductoRequest extends FormRequest
+{
+    public function authorize(): bool
+    {
+        return true;
+    }
+
+    public function rules(): array
+    {
+        return [
+            'id_producto_sin' => ['required', 'exists:productos_sin,id_producto_sin'],
+            'id_categoria' => ['required', 'exists:categorias,id_categoria'],
+            'id_unidad_medida' => ['required', 'exists:unidades_medida,id_unidad_medida'],
+            'descripcion_producto' => ['required', 'string', 'max:500'],
+            'detalle' => ['nullable', 'string', 'max:5000'],
+            'imagen' => ['nullable', 'image', 'mimes:jpg,jpeg,png,webp', 'max:2048'],
+            'costo_compra' => ['nullable', 'numeric', 'min:0'],
+            'precio_venta' => ['required', 'numeric', 'min:0'],
+            'controla_stock' => ['nullable', 'boolean'],
+            'stock' => ['nullable', 'numeric', 'min:0'],
+            'stock_minimo' => ['nullable', 'numeric', 'min:0'],
+            'fecha_vencimiento' => ['nullable', 'date'],
+        ];
+    }
+
+    public function messages(): array
+    {
+        return [
+            'id_producto_sin.required' => 'Debes seleccionar el producto del SIN.',
+            'id_producto_sin.exists' => 'El producto del SIN seleccionado no es vÃ¡lido.',
+            'id_categoria.required' => 'Debes seleccionar una categorÃ­a.',
+            'id_unidad_medida.required' => 'Debes seleccionar la unidad de medida.',
+            'descripcion_producto.required' => 'La descripciÃ³n del producto es obligatoria.',
+            'descripcion_producto.max' => 'La descripciÃ³n no puede pasar de 500 caracteres.',
+            'imagen.image' => 'El archivo debe ser una imagen.',
+            'imagen.mimes' => 'La imagen debe ser JPG, PNG o WEBP.',
+            'imagen.max' => 'La imagen no puede pesar mÃ¡s de 2 MB.',
+            'precio_venta.required' => 'El precio de venta es obligatorio.',
+            'precio_venta.numeric' => 'El precio debe ser un nÃºmero.',
+            'precio_venta.min' => 'El precio no puede ser negativo.',
+            'stock.min' => 'El stock no puede ser negativo.',
+            'stock_minimo.min' => 'El stock mÃ­nimo no puede ser negativo.',
+        ];
+    }
+}
+<?php
+
+namespace App\Modules\Productos\Http\Requests;
+
+use Illuminate\Foundation\Http\FormRequest;
+
+class StoreCategoriaRequest extends FormRequest
+{
+    public function authorize(): bool
+    {
+        return true;
+    }
+
+    public function rules(): array
+    {
+        return [
+            'nombre_categoria' => ['required', 'string', 'max:100', 'unique:categorias,nombre_categoria'],
+        ];
+    }
+
+    public function messages(): array
+    {
+        return [
+            'nombre_categoria.required' => 'El nombre de la categorÃ­a es obligatorio.',
+            'nombre_categoria.unique' => 'Ya existe una categorÃ­a con este nombre.',
+        ];
+    }
+}
+<?php
+
+namespace App\Modules\Productos\Http\Requests;
+
+use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
+
+class UpdateCategoriaRequest extends FormRequest
+{
+    public function authorize(): bool
+    {
+        return true;
+    }
+
+    public function rules(): array
+    {
+        return [
+            'nombre_categoria' => [
+                'required', 'string', 'max:100',
+                Rule::unique('categorias', 'nombre_categoria')
+                    ->ignore($this->route('categoria'), 'id_categoria'),
+            ],
+        ];
+    }
+
+    public function messages(): array
+    {
+        return [
+            'nombre_categoria.required' => 'El nombre de la categorÃ­a es obligatorio.',
+            'nombre_categoria.unique' => 'Ya existe otra categorÃ­a con este nombre.',
+        ];
+    }
+}
+<?php
+
+namespace App\Modules\Productos\Models;
+
+use Illuminate\Database\Eloquent\Casts\Attribute;
+use Illuminate\Database\Eloquent\Model;
+use App\Modules\Auditoria\Auditable;
+
+class Producto extends Model
+{
+    use Auditable;
+    protected $table = 'productos';
+    protected $primaryKey = 'id_producto';
+
+    protected $fillable = [
+        'id_producto_sin',
+        'id_categoria',
+        'id_unidad_medida',
+        'descripcion_producto',
+        'detalle',
+        'imagen',
+        'costo_compra',
+        'precio_venta',
+        'controla_stock',
+        'stock',
+        'stock_minimo',
+        'fecha_vencimiento',
+        'producto_estado',
+    ];
+
+    protected function casts(): array
+    {
+        return [
+            'controla_stock' => 'boolean',
+            'fecha_vencimiento' => 'date',
+        ];
+    }
+
+    protected function descripcionProducto(): Attribute
+    {
+        return Attribute::make(
+            set: fn (?string $valor) => $valor === null ? null : mb_strtoupper(trim($valor), 'UTF-8'),
+        );
+    }
+
+    public function productoSin()
+    {
+        return $this->belongsTo(ProductoSin::class, 'id_producto_sin', 'id_producto_sin');
+    }
+
+    public function categoria()
+    {
+        return $this->belongsTo(Categoria::class, 'id_categoria', 'id_categoria');
+    }
+
+    public function unidadMedida()
+    {
+        return $this->belongsTo(UnidadMedida::class, 'id_unidad_medida', 'id_unidad_medida');
+    }
+
+    public function movimientos()
+    {
+        return $this->hasMany(MovimientoStock::class, 'id_producto', 'id_producto');
+    }
+
+    /** Controla stock y no queda nada. */
+    public function estaAgotado(): bool
+    {
+        return $this->controla_stock && (float) $this->stock <= 0;
+    }
+
+    /** Controla stock, aÃºn queda, pero estÃ¡ en o por debajo del mÃ­nimo. */
+    public function stockBajo(): bool
+    {
+        return $this->controla_stock
+            && (float) $this->stock > 0
+            && (float) $this->stock_minimo > 0
+            && (float) $this->stock <= (float) $this->stock_minimo;
+    }
+}
+<?php
+
+namespace App\Modules\Productos\Models;
+
+use Illuminate\Database\Eloquent\Casts\Attribute;
+use Illuminate\Database\Eloquent\Model;
+use App\Modules\Auditoria\Auditable;
+
+class Categoria extends Model
+{
+    use Auditable;
+    protected $table = 'categorias';
+    protected $primaryKey = 'id_categoria';
+
+    protected $fillable = [
+        'nombre_categoria',
+        'categoria_estado',
+    ];
+
+    protected function nombreCategoria(): Attribute
+    {
+        return Attribute::make(
+            set: fn (?string $valor) => $valor === null ? null : mb_strtoupper(trim($valor), 'UTF-8'),
+        );
+    }
+}
+<?php
+
+namespace App\Modules\Productos\Models;
+
+use Illuminate\Database\Eloquent\Model;
+
+class UnidadMedida extends Model
+{
+    protected $table = 'unidades_medida';
+    protected $primaryKey = 'id_unidad_medida';
+
+    protected $fillable = [
+        'codigo_sin',
+        'nombre_unidad_medida',
+        'unidad_medida_estado',
+    ];
+}

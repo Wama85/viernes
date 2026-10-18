@@ -16,6 +16,7 @@ use App\Modules\Productos\Http\Controllers\ProductoController;
 use App\Modules\Recibos\Http\Controllers\ReciboController;
 use App\Modules\Usuarios\Http\Controllers\UsuarioController;
 use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\RespaldoController;
 
 
 Route::get('/', function () {
@@ -79,6 +80,13 @@ Route::middleware('auth')->group(function () {
     Route::get('cotizaciones/{cotizacion}/facturas/create', [FacturaController::class, 'create'])->name('facturas.create');
     Route::post('cotizaciones/{cotizacion}/facturas', [FacturaController::class, 'store'])->name('facturas.store');
     Route::get('facturas/{factura}', [FacturaController::class, 'show'])->name('facturas.show');
+
+    // Respaldos
+    Route::middleware('auth')->group(function () {
+    Route::get('/respaldos', [RespaldoController::class, 'index'])->name('respaldos.index');
+    Route::post('/respaldos', [RespaldoController::class, 'crear'])->name('respaldos.crear');
+    Route::get('/respaldos/archivo/{archivo}', [RespaldoController::class, 'bajar'])->name('respaldos.bajar');
+});
 });
 
 /*
@@ -142,6 +150,9 @@ Route::middleware(['auth', 'admin'])->group(function () {
         ->name('papelera.eliminar');
 });
 
+Route::get('/respaldos/descargar/{archivo}', [RespaldoController::class, 'descargar'])
+    ->middleware(['auth', 'signed'])
+    ->name('respaldos.descargar');
 
 
 require __DIR__ . '/auth.php';

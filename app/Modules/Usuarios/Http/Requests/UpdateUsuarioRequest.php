@@ -2,11 +2,17 @@
 
 namespace App\Modules\Usuarios\Http\Requests;
 
+use App\Modules\Usuarios\Http\Requests\Concerns\ReglasUsuario;
+use App\Modules\Usuarios\Models\Usuario;
 use Illuminate\Foundation\Http\FormRequest;
-use Illuminate\Validation\Rule;
+use Illuminate\Validation\Validator;
 
 class UpdateUsuarioRequest extends FormRequest
 {
+    use ReglasUsuario;
+
+    private const ROL_ADMIN = 1;
+
     public function authorize(): bool
     {
         return true;
@@ -14,29 +20,35 @@ class UpdateUsuarioRequest extends FormRequest
 
     public function rules(): array
     {
-        $idUsuario = $this->route('usuario');
-
-        return [
-            'nombre' => ['required', 'string', 'max:100'],
-            'email' => [
-                'required', 'string', 'email', 'max:100',
-                Rule::unique('usuarios', 'email')->ignore($idUsuario, 'id_usuario'),
-            ],
-            'password' => ['nullable', 'string', 'min:8'],
-            'id_rol' => ['required', 'exists:roles,id_rol'],
-        ];
+        return $this->reglasUsuario($this->route('usuario'));
     }
 
-    public function messages(): array
+    /** No se puede quitar el rol de administrador al único administrador activo. */
+    public function after(): array
     {
         return [
-            'nombre.required' => 'El nombre es obligatorio.',
-            'email.required' => 'El correo es obligatorio.',
-            'email.email' => 'El correo no tiene un formato válido.',
-            'email.unique' => 'Ya existe otro usuario con este correo.',
-            'password.min' => 'La contraseña debe tener al menos 8 caracteres.',
-            'id_rol.required' => 'Debes seleccionar un rol.',
-            'id_rol.exists' => 'El rol seleccionado no es válido.',
+            function (Validator $validador) {
+                $usuario = $this->route('usuario');
+
+                $eraAdminActivo = (int) $usuario->id_rol === self::ROL_ADMIN
+                    && (int) $usuario->usuario_estado === 1;
+
+                if (! $eraAdminActivo || (int) $this->input('id_rol') === self::ROL_ADMIN) {
+                    return;
+                }
+
+                $otrosAdmins = Usuario::where('id_rol', self::ROL_ADMIN)
+                    ->where('usuario_estado', 1)
+                    ->where('id_usuario', '!=', $usuario->id_usuario)
+                    ->count();
+
+                if ($otrosAdmins === 0) {
+                    $validador->errors()->add(
+                        'id_rol',
+                        'Es el único administrador activo: no puedes cambiarle el rol.'
+                    );
+                }
+            },
         ];
     }
 }

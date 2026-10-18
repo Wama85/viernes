@@ -15,6 +15,9 @@ use Illuminate\Validation\ValidationException;
 
 class CotizacionController extends Controller
 {
+    /** Importe máximo de una línea y del total (columnas decimal(10,2)). */
+    private const IMPORTE_MAXIMO = 99999999.99;
+
     public function index(Request $request)
     {
         $cotizaciones = Cotizacion::with(['cliente', 'creador'])
@@ -100,7 +103,7 @@ class CotizacionController extends Controller
         $cotizacion->load('detalles.unidadMedida');
 
         return view('cotizaciones.edit', array_merge(
-            $this->datosFormulario(),
+            $this->datosFormulario($cotizacion),
             compact('cotizacion')
         ));
     }
@@ -217,14 +220,22 @@ class CotizacionController extends Controller
             : now()->addDays($cantidad);
     }
 
-    private function datosFormulario(): array
+    /**
+     * Al editar, el cliente y los productos que la cotización ya usa se conservan
+     * en las listas aunque hayan sido dados de baja.
+     */
+    private function datosFormulario(?Cotizacion $cotizacion = null): array
     {
+        $idsProductos = $cotizacion ? $cotizacion->detalles->pluck('id_producto')->all() : [];
+
         return [
             'clientes' => Cliente::where('cliente_estado', 1)
+                ->when($cotizacion, fn ($q) => $q->orWhere('id_cliente', $cotizacion->id_cliente))
                 ->orderBy('razon_social')
                 ->get(['id_cliente', 'documento_identidad', 'complemento', 'razon_social']),
             'productos' => Producto::with('unidadMedida')
                 ->where('producto_estado', 1)
+                ->when($idsProductos, fn ($q) => $q->orWhereIn('id_producto', $idsProductos))
                 ->orderBy('descripcion_producto')
                 ->get(),
         ];
@@ -297,6 +308,12 @@ class CotizacionController extends Controller
             $descuento = (float) ($item['descuento'] ?? 0);
             $bruto = round($cantidad * $precio, 2);
 
+            if ($bruto > self::IMPORTE_MAXIMO) {
+                throw ValidationException::withMessages([
+                    "items.$i.cantidad" => 'El importe de la línea (cantidad × precio) supera el máximo permitido.',
+                ]);
+            }
+
             if ($descuento > $bruto) {
                 throw ValidationException::withMessages([
                     "items.$i.descuento" => 'El descuento no puede ser mayor al importe de la línea.',
@@ -320,6 +337,14 @@ class CotizacionController extends Controller
             ];
         }
 
-        return [$filas, round($total, 2)];
+        $total = round($total, 2);
+
+        if ($total > self::IMPORTE_MAXIMO) {
+            throw ValidationException::withMessages([
+                'items' => 'El total de la cotización supera el máximo permitido (99,999,999.99).',
+            ]);
+        }
+
+        return [$filas, $total];
     }
 }

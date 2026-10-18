@@ -2,11 +2,13 @@
 
 namespace App\Modules\Productos\Http\Requests;
 
+use App\Modules\Productos\Http\Requests\Concerns\ReglasCategoria;
 use Illuminate\Foundation\Http\FormRequest;
-use Illuminate\Validation\Rule;
 
 class UpdateCategoriaRequest extends FormRequest
 {
+    use ReglasCategoria;
+
     public function authorize(): bool
     {
         return true;
@@ -14,20 +16,6 @@ class UpdateCategoriaRequest extends FormRequest
 
     public function rules(): array
     {
-        return [
-            'nombre_categoria' => [
-                'required', 'string', 'max:100',
-                Rule::unique('categorias', 'nombre_categoria')
-                    ->ignore($this->route('categoria'), 'id_categoria'),
-            ],
-        ];
-    }
-
-    public function messages(): array
-    {
-        return [
-            'nombre_categoria.required' => 'El nombre de la categoría es obligatorio.',
-            'nombre_categoria.unique' => 'Ya existe otra categoría con este nombre.',
-        ];
+        return $this->reglasCategoria($this->route('categoria'));
     }
 }

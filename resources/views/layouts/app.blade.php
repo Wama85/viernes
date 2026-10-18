@@ -52,7 +52,7 @@
                         </div>
                     </header>
                 @endisset
-
+<x-recordatorio-respaldo />
                 <!-- Page Content -->
                 <main>
                     {{ $slot }}

@@ -20,6 +20,26 @@
     .val-resumen { margin-bottom: 1rem; padding: .625rem .875rem; border: 1px solid #fecaca; border-radius: .375rem;
                    background: #fef2f2; color: #b91c1c; font-size: .875rem; }
     .val-resumen[hidden] { display: none; }
+
+    /* Campo de contraseña */
+    .val-clave { position: relative; margin-top: .25rem; }
+    .val-clave input { padding-right: 2.75rem; }
+    .val-ojo { position: absolute; top: 0; right: 0; bottom: 0; display: flex; align-items: center;
+               padding: 0 .75rem; color: #9ca3af; background: transparent; border: 0; cursor: pointer; }
+    .val-ojo:hover { color: #4b5563; }
+    .val-ojo svg { width: 1.25rem; height: 1.25rem; }
+
+    /* Medidor de fuerza */
+    .val-fuerza { display: flex; align-items: center; gap: .5rem; margin-top: .375rem; }
+    .val-fuerza[hidden] { display: none; }
+    .val-barra { display: flex; flex: 1; gap: .25rem; }
+    .val-barra span { height: .25rem; flex: 1; border-radius: 9999px; background: #e5e7eb; }
+    .dark .val-barra span { background: #374151; }
+    .val-barra span.n1 { background: #ef4444; }
+    .val-barra span.n2 { background: #f59e0b; }
+    .val-barra span.n3 { background: #84cc16; }
+    .val-barra span.n4 { background: #22c55e; }
+    .val-fuerza small { min-width: 3.5rem; text-align: right; font-size: .75rem; color: #6b7280; }
 </style>
 
 <script>
@@ -31,6 +51,7 @@
     var RE_RAZON = /^[\p{L}\p{N} .,&'"\-\/()#°ºª+]+$/u;
     var RE_PERSONA = /^[\p{L} .'\-]+$/u;
     var RE_CORREO = /^[A-Za-z0-9._%+\-]+\x40[A-Za-z0-9\-]+(\.[A-Za-z0-9\-]+)*\.[A-Za-z]{2,}$/;
+    var RE_TEXTO = /^[^\x00-\x08\x0B\x0C\x0E-\x1F\x7F<>]+$/;
 
     function codigoTipo(form) {
         var sel = form.querySelector('[name="id_tipo_documento"]');
@@ -42,13 +63,22 @@
         return grupo === 'telefonos' ? valor.replace(/\D/g, '') : valor.trim().toLowerCase();
     }
 
-    /* Cada regla devuelve true, un texto de error, o { suave: true, mensaje } si solo está incompleto. */
+    /* Un campo deshabilitado u oculto (display:none) no se valida. */
+    function oculto(c) {
+        return c.disabled || (c.type !== 'hidden' && c.getClientRects().length === 0);
+    }
+
+    /* Cada regla devuelve true, un texto de error, o { suave: true, mensaje } si solo está incompleto.
+       Cada formulario puede registrar reglas propias con Object.assign(Validacion.reglas, {...}). */
     var reglas = {
         min: function (v, n) {
             return v.trim().length >= +n || { suave: true, mensaje: 'Escribe al menos ' + n + ' caracteres.' };
         },
         max: function (v, n) {
             return v.length <= +n || 'Máximo ' + n + ' caracteres.';
+        },
+        texto: function (v) {
+            return RE_TEXTO.test(v) || 'Hay caracteres no permitidos (por ejemplo < o >).';
         },
         razon: function (v) {
             return RE_RAZON.test(v.trim()) || 'Hay caracteres no permitidos. Usa letras, números y signos comunes.';
@@ -66,6 +96,48 @@
             if (d > 15) return 'El teléfono admite como máximo 15 dígitos.';
             if (d < 7) return { suave: true, mensaje: 'El teléfono debe tener al menos 7 dígitos.' };
             return true;
+        },
+        clave: function (v) {
+            if (v.length > 72) return 'La contraseña admite como máximo 72 caracteres.';
+            if (v.length < 8) return { suave: true, mensaje: 'La contraseña debe tener al menos 8 caracteres.' };
+            if (!/\p{L}/u.test(v)) return 'Incluye al menos una letra.';
+            if (!/\d/.test(v)) return 'Incluye al menos un número.';
+            return true;
+        },
+        igual: function (v, otro, campo, form) {
+            var o = form.querySelector('[name="' + otro + '"]');
+            return !o || v === o.value || 'Las contraseñas no coinciden.';
+        },
+        decimal: function (v, max) {
+            var t = v.trim().replace(',', '.');
+            if (/^\d+\.$/.test(t)) return { suave: true, mensaje: 'Escribe los decimales, por ejemplo 12.50.' };
+            if (!/^\d+(\.\d{1,2})?$/.test(t)) return 'Escribe un número con hasta 2 decimales, por ejemplo 12.50.';
+            if (max !== '' && +t > +max) return 'El valor máximo permitido es ' + max + '.';
+            return true;
+        },
+        positivo: function (v) {
+            var n = parseFloat(v.trim().replace(',', '.'));
+            return isNaN(n) || n > 0 || 'El valor debe ser mayor que cero.';
+        },
+        fecha: function (v) {
+            var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(v.trim());
+            if (!m) return 'Escribe una fecha válida.';
+            var y = +m[1], mes = +m[2] - 1, dia = +m[3];
+            var d = new Date(y, mes, dia);
+            if (d.getFullYear() !== y || d.getMonth() !== mes || d.getDate() !== dia) return 'La fecha no existe.';
+            if (y < 2000 || y > 2100) return 'El año debe estar entre 2000 y 2100.';
+            return true;
+        },
+        imagen: function (v, kb, campo) {
+            var f = campo.files && campo.files[0];
+            if (!f) return true;
+            if (!/\.(jpe?g|png|webp)$/i.test(f.name)) return 'La imagen debe ser JPG, PNG o WEBP.';
+            if (f.size > (+kb) * 1024) return 'La imagen no puede pesar más de ' + Math.round(kb / 1024) + ' MB.';
+            return true;
+        },
+        elegido: function (v, otro, campo, form) {
+            var o = form.querySelector('[name="' + otro + '"]');
+            return (o && o.value) ? true : { suave: true, mensaje: 'Elige una opción de la lista.' };
         },
         complemento: function (v) {
             return /^[0-9A-Za-z]{1,2}$/.test(v.trim()) || 'Hasta 2 letras o números, por ejemplo 1A.';
@@ -102,20 +174,31 @@
     };
 
     function evaluar(campo, form) {
-        if (campo.disabled) return { ok: true, vacio: true };
+        if (oculto(campo)) return { ok: true, vacio: true };
 
         var valor = campo.value || '';
         var lista = (campo.dataset.reglas || '').split('|').filter(Boolean).map(function (r) {
             var i = r.indexOf(':');
             return i < 0 ? [r, ''] : [r.slice(0, i), r.slice(i + 1)];
         });
-        var exigido = lista.some(function (r) { return r[0] === 'requerido'; });
+
+        /* Es obligatorio si lo pide 'requerido', o si usa 'igual' y el otro campo ya tiene valor. */
+        var exigido = lista.some(function (r) {
+            if (r[0] === 'requerido') return true;
+            if (r[0] === 'igual') {
+                var otro = form.querySelector('[name="' + r[1] + '"]');
+                return !!(otro && otro.value !== '');
+            }
+            return false;
+        });
 
         if (valor.trim() === '') {
             if (!exigido) return { ok: true, vacio: true };
+            var pideConfirmar = lista.some(function (r) { return r[0] === 'igual'; });
             return {
                 ok: false, suave: true,
-                mensaje: campo.tagName === 'SELECT' ? 'Selecciona una opción.' : 'Este campo es obligatorio.'
+                mensaje: campo.tagName === 'SELECT' ? 'Selecciona una opción.'
+                    : (pideConfirmar ? 'Confirma la contraseña.' : 'Este campo es obligatorio.')
             };
         }
 
@@ -156,12 +239,32 @@
 
     function revisar(campo, form, tecleando) {
         pintar(campo, evaluar(campo, form), tecleando);
+
         var g = campo.dataset.grupo;
         if (g) {
             form.querySelectorAll('[data-grupo="' + g + '"]').forEach(function (o) {
                 if (o !== campo && o.dataset.tocado === '1') pintar(o, evaluar(o, form), false);
             });
         }
+
+        /* Campos que se comparan con este (por ejemplo, la confirmación de contraseña). */
+        if (campo.name) {
+            form.querySelectorAll('[data-reglas*="igual:' + campo.name + '"]').forEach(function (o) {
+                if (o !== campo && o.dataset.tocado === '1') pintar(o, evaluar(o, form), false);
+            });
+        }
+
+        /* Permite que un formulario revalide campos que dependen de este. */
+        campo.dispatchEvent(new CustomEvent('validacion:cambio', { bubbles: true }));
+    }
+
+    /* Para componentes con lógica propia. Con soloTocado, solo revisa si el campo ya fue tocado. */
+    function revisarCampo(campo, soloTocado) {
+        var form = campo && campo.closest ? campo.closest('form[data-validar]') : null;
+        if (!form) return;
+        if (soloTocado && campo.dataset.tocado !== '1') return;
+        campo.dataset.tocado = '1';
+        revisar(campo, form, false);
     }
 
     function contar(campo) {
@@ -202,7 +305,6 @@
     }
 
     function revisarServidor(raiz) {
-        var form = raiz.closest ? raiz.closest('form') : null;
         raiz.querySelectorAll('[data-error-servidor]').forEach(function (c) {
             var m = c.dataset.errorServidor;
             if (!m) return;
@@ -253,7 +355,7 @@
                         if (o && o.dataset.tocado === '1') revisar(o, form, false);
                     });
                 }
-                if (c.tagName === 'SELECT') {
+                if (c.tagName === 'SELECT' || c.type === 'file') {
                     c.dataset.tocado = '1';
                     revisar(c, form, false);
                 }
@@ -262,7 +364,7 @@
             form.addEventListener('submit', function (e) {
                 var malos = [];
                 campos().forEach(function (c) {
-                    if (c.disabled) return;
+                    if (oculto(c)) return;
                     c.dataset.tocado = '1';
                     var r = evaluar(c, form);
                     pintar(c, r, false);
@@ -291,7 +393,13 @@
         });
     }
 
-    window.Validacion = { iniciar: iniciar, revisarServidor: revisarServidor, revalidarGrupo: revalidarGrupo };
+    window.Validacion = {
+        reglas: reglas,
+        iniciar: iniciar,
+        revisarServidor: revisarServidor,
+        revalidarGrupo: revalidarGrupo,
+        revisarCampo: revisarCampo
+    };
 
     iniciar();
     document.addEventListener('DOMContentLoaded', iniciar);

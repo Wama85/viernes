@@ -313,10 +313,16 @@
                 @endif
 
                 @if ($esAdmin && $editable)
-                    <form method="POST" action="{{ route('cotizaciones.anular', $cotizacion) }}"
-                          onsubmit="return confirm('¿Anular esta cotización?')">
+                    <form method="POST" action="{{ route('cotizaciones.anular', $cotizacion) }}">
                         @csrf @method('PATCH')
-                        <button type="submit" class="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700">Anular</button>
+                        <button type="button" class="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700"
+                                @click="$dispatch('confirmar-accion', {
+                                    form: $el.closest('form'),
+                                    titulo: 'Anular la cotización',
+                                    texto: @js('Vas a anular la cotización ' . $cotizacion->numero_completo . '. Esta acción no se puede deshacer.'),
+                                    boton: 'Anular',
+                                    peligro: true
+                                })">Anular</button>
                     </form>
                 @endif
 
@@ -324,4 +330,5 @@
             </div>
         </div>
     </div>
+    <x-modal-confirmacion />
 </x-app-layout>

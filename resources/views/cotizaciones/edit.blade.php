@@ -14,7 +14,7 @@
                     </p>
                 @endif
 
-                <form method="POST" action="{{ route('cotizaciones.update', $cotizacion) }}" class="space-y-6">
+                <form method="POST" action="{{ route('cotizaciones.update', $cotizacion) }}" class="space-y-6" data-validar novalidate>
                     @csrf
                     @method('PUT')
                     @include('cotizaciones._form')
@@ -24,6 +24,8 @@
                         <a href="{{ route('cotizaciones.show', $cotizacion) }}" class="text-sm text-gray-600 dark:text-gray-400 hover:underline">Cancelar</a>
                     </div>
                 </form>
+
+                <x-validacion />
             </div>
         </div>
     </div>

@@ -32,10 +32,17 @@
                     </thead>
                     <tbody class="divide-y divide-gray-200 dark:divide-gray-700">
                         @forelse ($categorias as $categoria)
+                            @php
+                                $activa = $categoria->categoria_estado == 1;
+                                $titulo = $activa ? 'Dar de baja la categoría' : 'Reactivar la categoría';
+                                $texto = $activa
+                                    ? 'Vas a dar de baja la categoría «' . $categoria->nombre_categoria . '». Podrás reactivarla cuando quieras.'
+                                    : 'Vas a reactivar la categoría «' . $categoria->nombre_categoria . '».';
+                            @endphp
                             <tr>
                                 <td class="px-6 py-4 text-sm text-gray-900 dark:text-gray-100">{{ $categoria->nombre_categoria }}</td>
                                 <td class="px-6 py-4 text-sm">
-                                    @if ($categoria->categoria_estado == 1)
+                                    @if ($activa)
                                         <span class="px-2 py-1 text-xs bg-green-100 text-green-800 rounded">Activa</span>
                                     @else
                                         <span class="px-2 py-1 text-xs bg-red-100 text-red-800 rounded">Dada de baja</span>
@@ -46,15 +53,20 @@
                                        class="text-indigo-600 hover:underline">Editar</a>
 
                                     <form action="{{ route('categorias.cambiarEstado', $categoria) }}"
-                                          method="POST" class="inline"
-                                          onsubmit="return confirm('¿Confirmas este cambio de estado?');">
+                                          method="POST" class="inline">
                                         @csrf
                                         @method('PATCH')
-                                        @if ($categoria->categoria_estado == 1)
-                                            <button type="submit" class="text-red-600 hover:underline">Dar de baja</button>
-                                        @else
-                                            <button type="submit" class="text-green-600 hover:underline">Reactivar</button>
-                                        @endif
+                                        <button type="button"
+                                                class="{{ $activa ? 'text-red-600' : 'text-green-600' }} hover:underline"
+                                                @click="$dispatch('confirmar-accion', {
+                                                    form: $el.closest('form'),
+                                                    titulo: @js($titulo),
+                                                    texto: @js($texto),
+                                                    boton: @js($activa ? 'Dar de baja' : 'Reactivar'),
+                                                    peligro: {{ $activa ? 'true' : 'false' }}
+                                                })">
+                                            {{ $activa ? 'Dar de baja' : 'Reactivar' }}
+                                        </button>
                                     </form>
                                 </td>
                             </tr>
@@ -70,4 +82,6 @@
             </div>
         </div>
     </div>
+
+    <x-modal-confirmacion />
 </x-app-layout>

@@ -14,6 +14,12 @@
                 </div>
             @endif
 
+            @if (session('error'))
+                <div class="mb-4 p-4 bg-red-100 text-red-800 rounded">
+                    {{ session('error') }}
+                </div>
+            @endif
+
             <div class="mb-4">
                 <a href="{{ route('usuarios.create') }}"
                    class="bg-indigo-600 text-white px-4 py-2 rounded hover:bg-indigo-700">
@@ -34,12 +40,19 @@
                     </thead>
                     <tbody class="divide-y divide-gray-200 dark:divide-gray-700">
                         @foreach ($usuarios as $usuario)
+                            @php
+                                $activo = $usuario->usuario_estado == 1;
+                                $titulo = $activo ? 'Dar de baja al usuario' : 'Reactivar al usuario';
+                                $texto = $activo
+                                    ? 'Vas a dar de baja a ' . $usuario->nombre . '. No podrá iniciar sesión hasta que lo reactives.'
+                                    : 'Vas a reactivar a ' . $usuario->nombre . '. Podrá volver a iniciar sesión.';
+                            @endphp
                             <tr>
                                 <td class="px-6 py-4 text-sm text-gray-900 dark:text-gray-100">{{ $usuario->nombre }}</td>
                                 <td class="px-6 py-4 text-sm text-gray-900 dark:text-gray-100">{{ $usuario->email }}</td>
                                 <td class="px-6 py-4 text-sm text-gray-900 dark:text-gray-100">{{ $usuario->rol->nombre_rol }}</td>
                                 <td class="px-6 py-4 text-sm">
-                                    @if ($usuario->usuario_estado == 1)
+                                    @if ($activo)
                                         <span class="px-2 py-1 text-xs bg-green-100 text-green-800 rounded">Activo</span>
                                     @else
                                         <span class="px-2 py-1 text-xs bg-red-100 text-red-800 rounded">Dado de baja</span>
@@ -50,15 +63,20 @@
                                        class="text-indigo-600 hover:underline">Editar</a>
 
                                     <form action="{{ route('usuarios.cambiarEstado', $usuario) }}"
-                                          method="POST" class="inline"
-                                          onsubmit="return confirm('¿Confirmas este cambio de estado?');">
+                                          method="POST" class="inline">
                                         @csrf
                                         @method('PATCH')
-                                        @if ($usuario->usuario_estado == 1)
-                                            <button type="submit" class="text-red-600 hover:underline">Dar de baja</button>
-                                        @else
-                                            <button type="submit" class="text-green-600 hover:underline">Reactivar</button>
-                                        @endif
+                                        <button type="button"
+                                                class="{{ $activo ? 'text-red-600' : 'text-green-600' }} hover:underline"
+                                                @click="$dispatch('confirmar-accion', {
+                                                    form: $el.closest('form'),
+                                                    titulo: @js($titulo),
+                                                    texto: @js($texto),
+                                                    boton: @js($activo ? 'Dar de baja' : 'Reactivar'),
+                                                    peligro: {{ $activo ? 'true' : 'false' }}
+                                                })">
+                                            {{ $activo ? 'Dar de baja' : 'Reactivar' }}
+                                        </button>
                                     </form>
                                 </td>
                             </tr>
@@ -68,4 +86,6 @@
             </div>
         </div>
     </div>
+
+    <x-modal-confirmacion />
 </x-app-layout>
