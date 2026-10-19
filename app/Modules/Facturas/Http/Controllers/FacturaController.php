@@ -8,15 +8,21 @@ use App\Modules\Empresa\Models\Empresa;
 use App\Modules\Facturas\Http\Requests\FacturaRequest;
 use App\Modules\Facturas\Models\Factura;
 use App\Modules\Productos\Services\StockService;
+use App\Modules\Sin\Services\SinFacturaEmisionService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
+use App\Modules\Facturas\Services\FacturaPdfService;
+use Throwable;
 
 class FacturaController extends Controller
 {
-    public function __construct(private StockService $stock)
-    {
+    public function __construct(
+        private StockService $stock,
+        private SinFacturaEmisionService $emision
+    ) {
     }
 
     public function index(Request $request)
@@ -98,12 +104,18 @@ class FacturaController extends Controller
             return [$factura, $faltantes];
         });
 
-        $mensaje = $factura->estado === Factura::APROBADA
-            ? 'Factura registrada y aprobada. Queda pendiente de enviarse al SIN.'
-            : 'Factura registrada. Queda pendiente de aprobación del administrador.';
+        $exito = true;
+        $mensaje = 'Factura registrada. Queda pendiente de aprobación del administrador.';
+
+        if ($factura->estado === Factura::APROBADA) {
+            // Ya confirmada la factura, se envía al SIN (fuera de la transacción).
+            [$exito, $envio] = $this->enviarAlSin($factura);
+            $mensaje = 'Factura registrada y aprobada. ' . $envio;
+        }
 
         return redirect()->route('facturas.show', $factura)
-            ->with('success', $mensaje . $this->stock->mensajeFaltantes($faltantes));
+            ->with($exito ? 'success' : 'error', $mensaje . $this->stock->mensajeFaltantes($faltantes))
+            ->with('mostrar_pdf', $this->mostrarPdf($factura));
     }
 
     public function show(Factura $factura)
@@ -115,7 +127,20 @@ class FacturaController extends Controller
         return view('facturas.show', compact('factura'));
     }
 
-    /** Al aprobar se asigna el número consecutivo y se descuenta el stock. */
+        /** PDF de la factura: se ve en el navegador o se descarga con ?descargar=1. */
+    public function pdf(Request $request, Factura $factura, FacturaPdfService $servicio)
+    {
+        $this->verificarPropiedad($factura->cotizacion);
+
+        abort_unless($factura->numero, 404, 'La factura aún no fue aprobada.');
+
+        $pdf = $servicio->generar($factura);
+        $nombre = 'factura-' . $factura->numero . '.pdf';
+
+        return $request->boolean('descargar') ? $pdf->download($nombre) : $pdf->stream($nombre);
+    }
+
+    /** Al aprobar se asigna el número consecutivo, se descuenta el stock y se envía al SIN. */
     public function aprobar(Request $request, Factura $factura)
     {
         $idUsuario = $request->user()->id_usuario;
@@ -141,18 +166,39 @@ class FacturaController extends Controller
             return back()->with('error', 'Solo una factura pendiente puede aprobarse.');
         }
 
-        return back()->with('success', 'Factura aprobada.' . $this->stock->mensajeFaltantes($faltantes));
+        $factura = $factura->fresh();
+        [$exito, $envio] = $this->enviarAlSin($factura);
+
+        return back()->with(
+            $exito ? 'success' : 'error',
+            'Factura aprobada. ' . $envio . $this->stock->mensajeFaltantes($faltantes)
+        )->with('mostrar_pdf', $this->mostrarPdf($factura));
     }
 
-    /** Anular libera los ítems y devuelve el stock. Una vez enviada al SIN, la anulación debe hacerse por el SIN. */
+    /** Envía (o reintenta enviar) al SIN una factura aprobada. */
+    public function enviarSin(Request $request, Factura $factura)
+    {
+        abort_unless((int) $request->user()->id_rol === 1, 403);
+
+        [$exito, $mensaje] = $this->enviarAlSin($factura);
+
+        return back()
+            ->with($exito ? 'success' : 'error', $mensaje)
+            ->with('mostrar_pdf', $this->mostrarPdf($factura));
+    }
+
+    /**
+     * Anular libera los ítems y devuelve el stock. Si el SIN ya la validó, la anulación
+     * debe hacerse por el SIN; si nunca llegó o fue rechazada, se anula aquí.
+     */
     public function anular(Request $request, Factura $factura)
     {
         if ($factura->estado === Factura::ANULADA) {
             return back()->with('error', 'La factura ya está anulada.');
         }
 
-        if ($factura->estado_sin !== Factura::SIN_NO_ENVIADA) {
-            return back()->with('error', 'Esta factura ya fue enviada al SIN: debe anularse a través del SIN.');
+        if (! in_array($factura->estado_sin, [Factura::SIN_NO_ENVIADA, Factura::SIN_RECHAZADA], true)) {
+            return back()->with('error', 'Esta factura ya fue validada por el SIN: debe anularse a través del SIN.');
         }
 
         $idUsuario = $request->user()->id_usuario;
@@ -172,6 +218,46 @@ class FacturaController extends Controller
 
     // ------------------------------------------------------------------
 
+    /** ¿Ya hay autorización para enviar facturas al SIN? (SIN_ENVIAR_FACTURAS en el .env) */
+    private function envioActivo(): bool
+    {
+        return (bool) config('facturacion.enviar_al_sin');
+    }
+
+    /** Mientras no haya autorización, la factura aprobada se muestra como documento sin valor legal. */
+    private function mostrarPdf(Factura $factura): bool
+    {
+        return $factura->estado === Factura::APROBADA && $factura->estado_sin !== Factura::SIN_VALIDADA;
+    }
+
+    /** @return array{0: bool, 1: string} [éxito, texto para el usuario] */
+    private function enviarAlSin(Factura $factura): array
+    {
+        if (! $this->envioActivo()) {
+            return [false, 'Todavía no es posible enviar la factura al SIN: el sistema aún no cuenta con la autorización de facturación electrónica. Se muestra el documento interno, sin valor legal.'];
+        }
+
+        try {
+            $enviada = $this->emision->emitir($factura);
+        } catch (Throwable $e) {
+            Log::warning("SIN: no se pudo enviar la factura {$factura->getKey()}: " . $e->getMessage());
+
+            return [false, 'No se pudo enviar al SIN: ' . $e->getMessage() . ' Puedes reintentar desde la factura.'];
+        }
+
+        if ($enviada->estado_sin === Factura::SIN_VALIDADA) {
+            return [true, $enviada->esDePrueba()
+                ? 'Validada por el SIN en el ambiente de pruebas (sin valor legal).'
+                : 'Validada por el SIN.'];
+        }
+
+        if ((int) $enviada->codigo_estado === -1) {
+            return [false, 'El SIN tuvo un error interno y no pudo procesar la factura (suele ser temporal). Reintenta en unos minutos. Detalle: ' . $enviada->mensaje_sin];
+        }
+
+        return [false, 'El SIN no la validó: ' . $enviada->mensaje_sin];
+    }
+
     private function verificarPropiedad(Cotizacion $cotizacion): void
     {
         $usuario = auth()->user();
@@ -182,10 +268,13 @@ class FacturaController extends Controller
         );
     }
 
-    /** Consecutivo general, sin reinicio por año (así lo exige el SIN). */
+    /** Consecutivo general, sin reinicio por año. Continúa después de las facturas de prueba del SIN. */
     private function siguienteNumero(): int
     {
-        return ((int) Factura::lockForUpdate()->max('numero')) + 1;
+        $propias = (int) Factura::lockForUpdate()->max('numero');
+        $deLasPruebas = (int) DB::table('sin_facturas_prueba')->max('numero');
+
+        return max($propias, $deLasPruebas) + 1;
     }
 
     private function motivoBloqueo(Cotizacion $cotizacion): ?string

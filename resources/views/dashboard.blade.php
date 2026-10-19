@@ -40,9 +40,9 @@
                 </div>
 
                 <div class="rounded-lg bg-white p-5 shadow-sm dark:bg-gray-800">
-                    <p class="text-sm text-gray-500 dark:text-gray-400">Vencen en 24 horas</p>
+                    <p class="text-sm text-gray-500 dark:text-gray-400">Vencen en {{ $recordatorios['dias_aviso'] }} días</p>
                     <p class="mt-2 text-3xl font-bold {{ $tarjetas['por_vencer'] > 0 ? 'text-red-600' : 'text-[#0c3082] dark:text-blue-300' }}">{{ $tarjetas['por_vencer'] }}</p>
-                    <p class="mt-1 text-xs text-gray-400">Cotizaciones aprobadas</p>
+                    <p class="mt-1 text-xs text-gray-400">Aprobadas sin recibo ni factura</p>
                 </div>
 
                 <div class="rounded-lg bg-white p-5 shadow-sm dark:bg-gray-800">
@@ -50,6 +50,67 @@
                     <p class="mt-2 text-3xl font-bold text-[#0c3082] dark:text-blue-300">Bs {{ number_format($tarjetas['ingresos_mes'], 2) }}</p>
                 </div>
             </div>
+
+            {{-- Recordatorios de vencimiento --}}
+            @if ($recordatorios['por_vencer']['total'] > 0 || $recordatorios['vencidas']['total'] > 0)
+                <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
+
+                    {{-- Por vencer --}}
+                    <div class="rounded-lg border border-yellow-300 bg-yellow-50 p-5 dark:border-yellow-700 dark:bg-gray-800">
+                        <div class="mb-3 flex items-center justify-between">
+                            <h3 class="font-semibold text-yellow-900 dark:text-yellow-200">Cotizaciones por vencer</h3>
+                            <span class="rounded-full bg-yellow-200 px-2 py-0.5 text-xs font-semibold text-yellow-900">{{ $recordatorios['por_vencer']['total'] }}</span>
+                        </div>
+                        <ul class="divide-y divide-yellow-200 text-sm dark:divide-gray-700">
+                            @forelse ($recordatorios['por_vencer']['lista'] as $c)
+                                <li class="py-2">
+                                    <a href="{{ route('cotizaciones.show', $c) }}" class="font-medium text-[#0c3082] hover:underline dark:text-blue-300">{{ $c->numero_completo }}</a>
+                                    <span class="text-gray-600 dark:text-gray-400">· {{ $c->cliente->razon_social }}</span>
+                                    @unless ($c->fueEnviada())
+                                        <span class="ml-1 rounded bg-red-100 px-1.5 py-0.5 text-xs font-semibold text-red-800">Sin enviar</span>
+                                    @endunless
+                                    <div class="text-xs text-gray-500">
+                                        Vence: {{ $c->fecha_vencimiento->format('d/m/Y H:i') }}
+                                        @if ($esAdmin) · {{ $c->creador->nombre ?? '—' }} @endif
+                                    </div>
+                                </li>
+                            @empty
+                                <li class="py-2 text-gray-500">Ninguna por vencer.</li>
+                            @endforelse
+                        </ul>
+                        @if ($recordatorios['por_vencer']['total'] > 8)
+                            <p class="mt-2 text-xs text-gray-500">y {{ $recordatorios['por_vencer']['total'] - 8 }} más…</p>
+                        @endif
+                    </div>
+
+                    {{-- Vencidas sin recibo ni factura --}}
+                    <div class="rounded-lg border border-red-300 bg-red-50 p-5 dark:border-red-700 dark:bg-gray-800">
+                        <div class="mb-3 flex items-center justify-between">
+                            <h3 class="font-semibold text-red-900 dark:text-red-200">
+                                Vencieron en los últimos {{ $recordatorios['dias_vencidas'] }} días
+                            </h3>
+                            <span class="rounded-full bg-red-200 px-2 py-0.5 text-xs font-semibold text-red-900">{{ $recordatorios['vencidas']['total'] }}</span>
+                        </div>
+                        <ul class="divide-y divide-red-200 text-sm dark:divide-gray-700">
+                            @forelse ($recordatorios['vencidas']['lista'] as $c)
+                                <li class="py-2">
+                                    <a href="{{ route('cotizaciones.show', $c) }}" class="font-medium text-[#0c3082] hover:underline dark:text-blue-300">{{ $c->numero_completo }}</a>
+                                    <span class="text-gray-600 dark:text-gray-400">· {{ $c->cliente->razon_social }}</span>
+                                    <div class="text-xs text-gray-500">
+                                        Venció: {{ $c->fecha_vencimiento->format('d/m/Y H:i') }}
+                                        @if ($esAdmin) · {{ $c->creador->nombre ?? '—' }} @endif
+                                    </div>
+                                </li>
+                            @empty
+                                <li class="py-2 text-gray-500">Ninguna.</li>
+                            @endforelse
+                        </ul>
+                        @if ($recordatorios['vencidas']['total'] > 8)
+                            <p class="mt-2 text-xs text-gray-500">y {{ $recordatorios['vencidas']['total'] - 8 }} más…</p>
+                        @endif
+                    </div>
+                </div>
+            @endif
 
             {{-- Alerta de stock --}}
             @if ($stockAlertas['total'] > 0)

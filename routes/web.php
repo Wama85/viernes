@@ -80,6 +80,8 @@ Route::middleware('auth')->group(function () {
     Route::get('cotizaciones/{cotizacion}/facturas/create', [FacturaController::class, 'create'])->name('facturas.create');
     Route::post('cotizaciones/{cotizacion}/facturas', [FacturaController::class, 'store'])->name('facturas.store');
     Route::get('facturas/{factura}', [FacturaController::class, 'show'])->name('facturas.show');
+    Route::patch('facturas/{factura}/enviar-sin', [FacturaController::class, 'enviarSin'])->name('facturas.enviar-sin');
+    Route::get('facturas/{factura}/pdf', [FacturaController::class, 'pdf'])->name('facturas.pdf');
 
     // Respaldos
     Route::middleware('auth')->group(function () {

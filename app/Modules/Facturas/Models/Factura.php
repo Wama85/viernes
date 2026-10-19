@@ -27,13 +27,17 @@ class Factura extends Model
 
     public const FORMAS_PAGO = ['EFECTIVO', 'TRANSFERENCIA', 'QR', 'CHEQUE'];
 
+    /** Ambiente piloto del SIN: las facturas emitidas ahí no tienen valor legal. */
+    public const AMBIENTE_PILOTO = 2;
+
     protected $fillable = [
         'numero', 'id_cotizacion', 'id_usuario', 'fecha_emision',
         'cliente_razon_social', 'cliente_id_tipo_documento', 'cliente_documento',
         'cliente_complemento', 'cliente_correo',
         'monto_total', 'forma_pago',
         'estado', 'id_aprobador', 'fecha_aprobacion',
-        'estado_sin', 'cuf', 'codigo_recepcion', 'fecha_envio_sin', 'mensaje_sin',
+        'estado_sin', 'cuf', 'cufd', 'leyenda', 'codigo_ambiente', 'codigo_punto_venta',
+        'codigo_estado', 'codigo_recepcion', 'fecha_envio_sin', 'mensaje_sin',
     ];
 
     protected $casts = [
@@ -53,6 +57,12 @@ class Factura extends Model
     {
         return $this->cliente_documento
             . ($this->cliente_complemento ? '-' . $this->cliente_complemento : '');
+    }
+
+    /** Emitida en el ambiente de pruebas del SIN: no tiene valor legal. */
+    public function esDePrueba(): bool
+    {
+        return (int) $this->codigo_ambiente === self::AMBIENTE_PILOTO;
     }
 
     public function cotizacion()

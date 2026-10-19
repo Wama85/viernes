@@ -73,7 +73,7 @@
 
                                     <form action="{{ route('clientes.cambiarEstado', $cliente) }}"
                                           method="POST" class="inline"
-                                          onsubmit="return confirm('¿Confirmas este cambio de estado?');">
+                                          @submit.prevent="$dispatch('confirmar-accion', { form: $el, titulo: 'Cambiar estado', texto: '¿Confirmas este cambio de estado del cliente?', boton: 'Confirmar', peligro: false })">
                                         @csrf
                                         @method('PATCH')
                                         @if ($cliente->cliente_estado == 1)
@@ -96,4 +96,5 @@
             </div>
         </div>
     </div>
+  <x-modal-confirmacion />
 </x-app-layout>

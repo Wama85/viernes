@@ -1,13 +1,12 @@
 <?php
 
 use App\Modules\Usuarios\Http\Controllers\AuthenticatedSessionController;
+use App\Modules\Usuarios\Http\Controllers\GoogleController;
+use App\Modules\Usuarios\Http\Controllers\RecuperacionController;
 use App\Http\Controllers\Auth\ConfirmablePasswordController;
 use App\Http\Controllers\Auth\EmailVerificationNotificationController;
 use App\Http\Controllers\Auth\EmailVerificationPromptController;
-use App\Http\Controllers\Auth\NewPasswordController;
 use App\Http\Controllers\Auth\PasswordController;
-use App\Http\Controllers\Auth\PasswordResetLinkController;
-use App\Http\Controllers\Auth\RegisteredUserController;
 use App\Http\Controllers\Auth\VerifyEmailController;
 use Illuminate\Support\Facades\Route;
 
@@ -18,17 +17,38 @@ Route::middleware('guest')->group(function () {
 
     Route::post('login', [AuthenticatedSessionController::class, 'store']);
 
-    Route::get('forgot-password', [PasswordResetLinkController::class, 'create'])
+    // Inicio de sesión con Google
+    Route::get('auth/google', [GoogleController::class, 'redirect'])
+        ->name('google.redirect');
+
+    Route::get('auth/google/callback', [GoogleController::class, 'callback'])
+        ->name('google.callback');
+
+    // Recuperar contraseña con código enviado al correo
+    Route::get('forgot-password', [RecuperacionController::class, 'solicitar'])
         ->name('password.request');
 
-    Route::post('forgot-password', [PasswordResetLinkController::class, 'store'])
+    Route::post('forgot-password', [RecuperacionController::class, 'enviar'])
+        ->middleware('throttle:6,1')
         ->name('password.email');
 
-    Route::get('reset-password/{token}', [NewPasswordController::class, 'create'])
-        ->name('password.reset');
+    Route::get('recuperar/codigo', [RecuperacionController::class, 'codigo'])
+        ->name('password.codigo');
 
-    Route::post('reset-password', [NewPasswordController::class, 'store'])
-        ->name('password.store');
+    Route::post('recuperar/codigo', [RecuperacionController::class, 'verificar'])
+        ->middleware('throttle:10,1')
+        ->name('password.codigo.verificar');
+
+    Route::post('recuperar/reenviar', [RecuperacionController::class, 'reenviar'])
+        ->middleware('throttle:6,1')
+        ->name('password.codigo.reenviar');
+
+    Route::get('recuperar/nueva', [RecuperacionController::class, 'nueva'])
+        ->name('password.nueva');
+
+    Route::post('recuperar/nueva', [RecuperacionController::class, 'actualizar'])
+        ->middleware('throttle:10,1')
+        ->name('password.actualizar');
 });
 
 Route::middleware('auth')->group(function () {

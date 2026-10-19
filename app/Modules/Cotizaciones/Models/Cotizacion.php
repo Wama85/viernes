@@ -47,6 +47,32 @@ class Cotizacion extends Model
             && $this->fecha_vencimiento->isPast();
     }
 
+    // ---------- Recordatorios de vencimiento ----------
+
+    /** Cotizaciones sin ningún recibo ni factura activos (los anulados no cuentan). */
+    public function scopeSinDocumentos($consulta)
+    {
+        return $consulta
+            ->whereDoesntHave('recibos', fn ($r) => $r->where('recibos.estado', '!=', Recibo::ANULADO))
+            ->whereDoesntHave('facturas', fn ($f) => $f->where('facturas.estado', '!=', Factura::ANULADA));
+    }
+
+    /** Aprobadas, sin recibo ni factura, que vencen dentro de los próximos $dias días. */
+    public function scopePorVencer($consulta, int $dias = 2)
+    {
+        return $consulta->where('estado', self::APROBADA)
+            ->whereBetween('fecha_vencimiento', [now(), now()->addDays($dias)])
+            ->sinDocumentos();
+    }
+
+    /** Aprobadas, sin recibo ni factura, que vencieron en los últimos $dias días. */
+    public function scopeVencidasRecientes($consulta, int $dias = 7)
+    {
+        return $consulta->where('estado', self::APROBADA)
+            ->whereBetween('fecha_vencimiento', [now()->subDays($dias), now()])
+            ->sinDocumentos();
+    }
+
     // ---------- Relaciones ----------
 
     public function cliente()   { return $this->belongsTo(Cliente::class, 'id_cliente', 'id_cliente'); }

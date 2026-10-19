@@ -10,6 +10,11 @@
         $pendientes['facturas.index']     = \App\Modules\Facturas\Models\Factura::where('estado', 'PENDIENTE')->count();
     }
 
+    // Cotizaciones aprobadas, sin recibo ni factura, que vencen pronto (cada vendedor ve las suyas)
+    $porVencerMenu = \App\Modules\Cotizaciones\Models\Cotizacion::porVencer(2)
+        ->when(! $esAdmin, fn ($q) => $q->where('id_usuario', $usuario->id_usuario))
+        ->count();
+
     $iconos = [
         'home'     => 'M2.25 12l8.954-8.955c.44-.439 1.152-.439 1.591 0L21.75 12M4.5 9.75v10.125c0 .621.504 1.125 1.125 1.125H9.75v-4.875c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21h4.125c.621 0 1.125-.504 1.125-1.125V9.75M8.25 21h8.25',
         'documento'=> 'M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z',
@@ -79,7 +84,7 @@
     </div>
 
     {{-- Módulos --}}
-        <nav class="menu-scroll flex-1 space-y-4 overflow-y-auto px-3 py-3">
+    <nav class="menu-scroll flex-1 space-y-4 overflow-y-auto px-3 py-3">
         @foreach ($grupos as $titulo => $items)
             @php $visibles = collect($items)->filter(fn ($item) => Route::has($item[1])); @endphp
 
@@ -106,6 +111,11 @@
                                 @if ($cantidad > 0)
                                     <span class="rounded-full bg-red-500 px-2 py-0.5 text-[11px] font-semibold text-white"
                                           title="Pendientes de aprobación">{{ $cantidad }}</span>
+                                @endif
+
+                                @if ($ruta === 'cotizaciones.index' && $porVencerMenu > 0)
+                                    <span class="rounded-full bg-yellow-400 px-2 py-0.5 text-[11px] font-semibold text-yellow-900"
+                                          title="Cotizaciones por vencer">{{ $porVencerMenu }}</span>
                                 @endif
                             </a>
                         @endforeach

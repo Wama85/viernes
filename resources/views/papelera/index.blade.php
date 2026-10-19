@@ -97,7 +97,7 @@
 
                                     @if ($puedeEliminar)
                                         <form method="POST" action="{{ route('papelera.eliminar', [$tipo, $registro->getKey()]) }}"
-                                              class="inline ml-3" onsubmit="return confirm(@js($aviso));">
+                                              class="inline ml-3" @submit.prevent="$dispatch('confirmar-accion', { form: $el, titulo: 'Eliminar definitivamente', texto: @js($aviso), boton: 'Eliminar', peligro: true })">
                                             @csrf
                                             @method('DELETE')
                                             <button type="submit" class="text-red-600 hover:underline">Eliminar definitivamente</button>
@@ -119,4 +119,5 @@
             </div>
         </div>
     </div>
+  <x-modal-confirmacion />
 </x-app-layout>

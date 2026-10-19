@@ -10,6 +10,12 @@ use Illuminate\Http\Request;
 
 class DashboardController extends Controller
 {
+    /** Días de anticipación del aviso de vencimiento. */
+    private const DIAS_AVISO = 2;
+
+    /** Días hacia atrás que se muestran las vencidas sin recibo ni factura. */
+    private const DIAS_VENCIDAS = 7;
+
     public function __invoke(Request $request)
     {
         $usuario = $request->user();
@@ -25,6 +31,9 @@ class DashboardController extends Controller
                 $q->whereHas('cotizacion', fn ($c) => $c->where('id_usuario', $usuario->id_usuario));
             });
 
+        $porVencer = (clone $cotizaciones)->porVencer(self::DIAS_AVISO);
+        $vencidas = (clone $cotizaciones)->vencidasRecientes(self::DIAS_VENCIDAS);
+
         $tarjetas = [
             'del_mes' => (clone $cotizaciones)
                 ->where('fecha_emision', '>=', $inicioMes)
@@ -37,17 +46,29 @@ class DashboardController extends Controller
                 ->where('fecha_vencimiento', '>', now())
                 ->count(),
 
-            // Aprobadas que vencen en las próximas 24 horas
-            'por_vencer' => (clone $cotizaciones)
-                ->where('estado', Cotizacion::APROBADA)
-                ->whereBetween('fecha_vencimiento', [now(), now()->addDay()])
-                ->count(),
+            // Aprobadas, sin recibo ni factura, que vencen pronto
+            'por_vencer' => (clone $porVencer)->count(),
 
             // Recibos aprobados en el mes
             'ingresos_mes' => (float) (clone $recibos)
                 ->where('estado', Recibo::APROBADO)
                 ->where('fecha_emision', '>=', $inicioMes)
                 ->sum('monto'),
+        ];
+
+        $recordatorios = [
+            'dias_aviso'    => self::DIAS_AVISO,
+            'dias_vencidas' => self::DIAS_VENCIDAS,
+            'por_vencer'    => [
+                'total' => (clone $porVencer)->count(),
+                'lista' => (clone $porVencer)->with(['cliente', 'creador'])
+                    ->orderBy('fecha_vencimiento')->limit(8)->get(),
+            ],
+            'vencidas'      => [
+                'total' => (clone $vencidas)->count(),
+                'lista' => (clone $vencidas)->with(['cliente', 'creador'])
+                    ->orderByDesc('fecha_vencimiento')->limit(8)->get(),
+            ],
         ];
 
         // Productos agotados o en/bajo su stock mínimo
@@ -85,6 +106,6 @@ class DashboardController extends Controller
             ];
         }
 
-        return view('dashboard', compact('tarjetas', 'pendientes', 'esAdmin', 'stockAlertas'));
+        return view('dashboard', compact('tarjetas', 'pendientes', 'esAdmin', 'stockAlertas', 'recordatorios'));
     }
 }

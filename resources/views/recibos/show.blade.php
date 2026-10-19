@@ -99,7 +99,7 @@
                        class="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700">Editar</a>
 
                     <form method="POST" action="{{ route('recibos.anular', $recibo) }}"
-                          onsubmit="return confirm('¿Anular este recibo? Sus ítems quedarán libres.')">
+                          @submit.prevent="$dispatch('confirmar-accion', { form: $el, titulo: 'Anular el recibo', texto: 'Vas a anular este recibo. Sus ítems quedarán libres.', boton: 'Anular', peligro: true })">
                         @csrf @method('PATCH')
                         <button type="submit" class="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700">Anular</button>
                     </form>
@@ -109,4 +109,5 @@
             </div>
         </div>
     </div>
+  <x-modal-confirmacion />
 </x-app-layout>
