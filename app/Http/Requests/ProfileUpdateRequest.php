@@ -2,30 +2,45 @@
 
 namespace App\Http\Requests;
 
-use App\Models\User;
 use Illuminate\Contracts\Validation\ValidationRule;
 use Illuminate\Foundation\Http\FormRequest;
-use Illuminate\Validation\Rule;
 
 class ProfileUpdateRequest extends FormRequest
 {
+    public function authorize(): bool
+    {
+        return true;
+    }
+
+    /** Limpia el nombre antes de validar. */
+    protected function prepareForValidation(): void
+    {
+        $nombre = $this->input('nombre');
+
+        $this->merge([
+            'nombre' => is_string($nombre) ? trim(preg_replace('/\s+/u', ' ', $nombre)) : $nombre,
+        ]);
+    }
+
     /**
-     * Get the validation rules that apply to the request.
+     * Solo el nombre se edita desde el perfil; el correo lo cambia el administrador.
      *
      * @return array<string, ValidationRule|array<mixed>|string>
      */
     public function rules(): array
     {
         return [
-            'name' => ['required', 'string', 'max:255'],
-            'email' => [
-                'required',
-                'string',
-                'lowercase',
-                'email',
-                'max:255',
-                Rule::unique(User::class)->ignore($this->user()->id),
-            ],
+            'nombre' => ['required', 'string', 'min:3', 'max:100', 'regex:/^[\p{L} .\'\-]+$/u'],
+        ];
+    }
+
+    public function messages(): array
+    {
+        return [
+            'nombre.required' => 'El nombre es obligatorio.',
+            'nombre.min'      => 'El nombre debe tener al menos 3 caracteres.',
+            'nombre.max'      => 'El nombre admite como máximo 100 caracteres.',
+            'nombre.regex'    => 'El nombre solo admite letras, espacios, punto, apóstrofo y guion.',
         ];
     }
 }

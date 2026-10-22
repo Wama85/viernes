@@ -17,6 +17,7 @@ use App\Modules\Recibos\Http\Controllers\ReciboController;
 use App\Modules\Usuarios\Http\Controllers\UsuarioController;
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\RespaldoController;
+use App\Modules\Consultas\Http\Controllers\ConsultaController;
 
 
 Route::get('/', function () {
@@ -46,7 +47,7 @@ Route::middleware('auth')->group(function () {
 
     Route::get('/profile', [ProfileController::class, 'edit'])->name('profile.edit');
     Route::patch('/profile', [ProfileController::class, 'update'])->name('profile.update');
-    Route::delete('/profile', [ProfileController::class, 'destroy'])->name('profile.destroy');
+
 
     // Clientes
     Route::resource('clientes', ClienteController::class)->except(['show', 'destroy']);
@@ -89,6 +90,10 @@ Route::middleware('auth')->group(function () {
     Route::post('/respaldos', [RespaldoController::class, 'crear'])->name('respaldos.crear');
     Route::get('/respaldos/archivo/{archivo}', [RespaldoController::class, 'bajar'])->name('respaldos.bajar');
 });
+
+    // Consultas
+    Route::get('consultas', [ConsultaController::class, 'index'])->name('consultas.index');
+    
 });
 
 /*
