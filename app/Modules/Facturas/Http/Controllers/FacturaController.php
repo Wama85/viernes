@@ -16,6 +16,7 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
 use App\Modules\Facturas\Services\FacturaPdfService;
 use App\Support\TotalFacturable;
+use App\Modules\Sin\Services\SinFacturaAnulacionService;
 use Throwable;
 
 class FacturaController extends Controller
@@ -193,7 +194,10 @@ class FacturaController extends Controller
     {
         abort_unless((int) $request->user()->id_rol === 1, 403);
 
-        [$exito, $mensaje] = $this->enviarAlSin($factura);
+        
+
+        // «con_excepcion»: el SIN no reconoce el NIT del cliente y se emite igual con código de excepción.
+        [$exito, $mensaje] = $this->enviarAlSin($factura, $request->boolean('con_excepcion'));
 
         return back()
             ->with($exito ? 'success' : 'error', $mensaje)
@@ -201,32 +205,59 @@ class FacturaController extends Controller
     }
 
     /**
-     * Anular libera los ítems y devuelve el stock. Si el SIN ya la validó, la anulación
-     * debe hacerse por el SIN; si nunca llegó o fue rechazada, se anula aquí.
+     * Anular libera los ítems y devuelve el stock. Si el SIN ya la validó, primero se anula
+     * en el SIN (con su motivo); si nunca llegó o fue rechazada, se anula solo aquí.
      */
-    public function anular(Request $request, Factura $factura)
+    public function anular(Request $request, Factura $factura, SinFacturaAnulacionService $anulacion)
     {
         if ($factura->estado === Factura::ANULADA) {
             return back()->with('error', 'La factura ya está anulada.');
         }
 
-        if (! in_array($factura->estado_sin, [Factura::SIN_NO_ENVIADA, Factura::SIN_RECHAZADA], true)) {
-            return back()->with('error', 'Esta factura ya fue validada por el SIN: debe anularse a través del SIN.');
+        $validadaPorSin = $factura->estado_sin === Factura::SIN_VALIDADA;
+
+        if (! $validadaPorSin && ! in_array($factura->estado_sin, [Factura::SIN_NO_ENVIADA, Factura::SIN_RECHAZADA], true)) {
+            return back()->with('error', 'Esta factura no se puede anular en su estado actual.');
+        }
+
+        $datosSin = [];
+
+        if ($validadaPorSin) {
+            $request->validate(['motivo_sin' => ['required', 'in:1,3,4']]);
+
+            try {
+                [$aceptada, $codigoEstado, $mensaje] = $anulacion->anularFactura($factura, (int) $request->motivo_sin);
+            } catch (Throwable $e) {
+                Log::warning("SIN: no se pudo anular la factura {$factura->getKey()}: " . $e->getMessage());
+
+                return back()->with('error', 'No se pudo anular en el SIN: ' . $e->getMessage());
+            }
+
+            if (! $aceptada) {
+                return back()->with('error', 'El SIN no aceptó la anulación: ' . $mensaje);
+            }
+
+            $datosSin = [
+                'codigo_estado' => $codigoEstado,
+                'mensaje_sin'   => 'ANULADA EN EL SIN (motivo ' . $request->motivo_sin . '). ' . $mensaje,
+            ];
         }
 
         $idUsuario = $request->user()->id_usuario;
 
-        DB::transaction(function () use ($factura, $idUsuario) {
+        DB::transaction(function () use ($factura, $idUsuario, $datosSin) {
             $actual = Factura::whereKey($factura->getKey())->lockForUpdate()->firstOrFail();
 
             if ($actual->estado === Factura::APROBADA) {
                 $this->stock->devolver(StockService::DOC_FACTURA, $actual->id_factura, $idUsuario, 'Anulación de la factura');
             }
 
-            $actual->update(['estado' => Factura::ANULADA]);
+            $actual->update(['estado' => Factura::ANULADA] + $datosSin);
         });
 
-        return back()->with('success', 'Factura anulada. Sus ítems quedaron disponibles.');
+        return back()->with('success', $validadaPorSin
+            ? 'Factura anulada en el SIN y en el sistema. Sus ítems quedaron disponibles.'
+            : 'Factura anulada. Sus ítems quedaron disponibles.');
     }
 
     // ------------------------------------------------------------------
@@ -244,14 +275,14 @@ class FacturaController extends Controller
     }
 
     /** @return array{0: bool, 1: string} [éxito, texto para el usuario] */
-    private function enviarAlSin(Factura $factura): array
+    private function enviarAlSin(Factura $factura, bool $conExcepcion = false): array
     {
         if (! $this->envioActivo()) {
             return [false, 'Todavía no es posible enviar la factura al SIN: el sistema aún no cuenta con la autorización de facturación electrónica. Se muestra el documento interno, sin valor legal.'];
         }
 
         try {
-            $enviada = $this->emision->emitir($factura);
+            $enviada = $this->emision->emitir($factura, $conExcepcion);
         } catch (Throwable $e) {
             Log::warning("SIN: no se pudo enviar la factura {$factura->getKey()}: " . $e->getMessage());
 

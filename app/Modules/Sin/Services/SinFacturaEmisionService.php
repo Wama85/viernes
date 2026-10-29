@@ -39,7 +39,7 @@ class SinFacturaEmisionService
      * Arma, valida y envía la factura al SIN. Lanza RuntimeException con un mensaje claro
      * si algo impide enviarla; si el SIN responde (aceptando o rechazando), devuelve la factura actualizada.
      */
-    public function emitir(Factura $factura): Factura
+    public function emitir(Factura $factura, bool $conExcepcion = false): Factura
     {
         // Evita envíos dobles (doble clic, dos pestañas).
         $candado = Cache::lock('sin-emitir-factura-' . $factura->getKey(), 120);
@@ -49,13 +49,13 @@ class SinFacturaEmisionService
         }
 
         try {
-            return $this->procesar($factura->fresh(['detalles', 'emisor']));
+            return $this->procesar($factura->fresh(['detalles', 'emisor']), $conExcepcion);
         } finally {
             $candado->release();
         }
     }
 
-    private function procesar(Factura $factura): Factura
+    private function procesar(Factura $factura, bool $conExcepcion = false): Factura
     {
         if ($factura->estado !== Factura::APROBADA) {
             throw new RuntimeException('Solo se envían al SIN las facturas aprobadas.');
@@ -155,7 +155,7 @@ class SinFacturaEmisionService
             'ivaFijo'                      => $iva,
             'montoGiftCard'                => null,
             'descuentoAdicional'           => $descuentoAdicional > 0 ? $descuentoAdicional : null,
-            'codigoExcepcion'              => null,
+            'codigoExcepcion'              => $conExcepcion ? 1 : null,
             'cafc'                         => null,
             'leyenda'                      => $leyenda,
             'usuario'                      => mb_substr((string) ($factura->emisor?->nombre ?? 'SISTEMA'), 0, 100),
@@ -163,6 +163,7 @@ class SinFacturaEmisionService
         ];
 
         $contenido = $this->xml->construir($cabecera, $detalles);
+        
         $errores = $this->xml->validar($contenido);
 
         if ($errores) {
@@ -212,6 +213,7 @@ class SinFacturaEmisionService
 
         return $factura->fresh();
     }
+
     /** @return array{0: bool, 1: ?int, 2: ?string, 3: string} */
     private function enviar(string $xml, string $cufd, string $cuis): array
     {

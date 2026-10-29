@@ -5,6 +5,7 @@ namespace App\Modules\Sin\Services;
 use App\Modules\Sin\Models\SinCufd;
 use App\Modules\Sin\Models\SinCuis;
 use App\Modules\Sin\Models\SinFacturaPrueba;
+use App\Modules\Facturas\Models\Factura;
 use RuntimeException;
 use SoapFault;
 
@@ -78,6 +79,31 @@ class SinFacturaAnulacionService
         }
 
         return $factura->fresh();
+    }
+    /**
+     * Anula en el SIN una factura real ya validada.
+     *
+     * @return array{0: bool, 1: ?int, 2: string} [aceptada, codigoEstado, mensaje]
+     */
+    public function anularFactura(Factura $factura, int $motivo): array
+    {
+        if ($factura->estado_sin !== Factura::SIN_VALIDADA) {
+            throw new RuntimeException('Solo se anulan en el SIN las facturas validadas por el SIN.');
+        }
+
+        if (! $factura->cuf) {
+            throw new RuntimeException('La factura no tiene CUF; no se puede anular en el SIN.');
+        }
+
+        if (! in_array($motivo, self::MOTIVOS, true)) {
+            throw new RuntimeException('El motivo de anulación debe ser 1, 3 o 4.');
+        }
+
+        return $this->invocar(
+            'anulacionFactura',
+            'SolicitudServicioAnulacionFactura',
+            $this->comunes($factura->cuf) + ['codigoMotivo' => $motivo]
+        );
     }
 
     private function comunes(string $cuf): array

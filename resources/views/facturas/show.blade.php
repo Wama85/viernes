@@ -140,7 +140,16 @@
                     </form>
                 @endif
 
-               @if ($factura->numero)
+                @if ($esAdmin && $factura->estado === 'APROBADA' && $factura->estado_sin === 'RECHAZADA' && str_contains((string) $factura->mensaje_sin, '1037'))
+                    <form method="POST" action="{{ route('facturas.enviar-sin', $factura) }}"
+                          @submit.prevent="$dispatch('confirmar-accion', { form: $el, titulo: 'Emitir con excepción de NIT', texto: 'El SIN no reconoce el NIT de este cliente. Hazlo solo si el cliente confirma que ese es su NIT y pide la factura igual. Se enviará con código de excepción.', boton: 'Emitir con excepción', peligro: true })">
+                        @csrf @method('PATCH')
+                        <input type="hidden" name="con_excepcion" value="1">
+                        <button type="submit" class="px-4 py-2 rounded-md" style="background-color:#d97706; color:#ffffff;">Emitir con excepción de NIT</button>
+                    </form>
+                @endif
+
+                @if ($factura->numero)
                     <a href="{{ route('facturas.pdf', $factura) }}" target="_blank"
                        class="px-4 py-2 rounded-md"
                        style="background-color:#4b5563; color:#ffffff; display:inline-block;">Ver PDF</a>
@@ -151,8 +160,17 @@
 
                 @if ($esAdmin && $factura->estado !== 'ANULADA')
                     <form method="POST" action="{{ route('facturas.anular', $factura) }}"
-                          @submit.prevent="$dispatch('confirmar-accion', { form: $el, titulo: 'Anular la factura', texto: 'Vas a anular esta factura. Sus ítems quedarán libres.', boton: 'Anular', peligro: true })">
+                          style="display:flex; align-items:center; gap:8px;"
+                          @submit.prevent="$dispatch('confirmar-accion', { form: $el, titulo: 'Anular la factura', texto: 'Vas a anular esta factura. Si el SIN ya la validó, también se anula en el SIN. Sus ítems quedarán libres.', boton: 'Anular', peligro: true })">
                         @csrf @method('PATCH')
+                        @if ($factura->estado_sin === 'VALIDADA')
+                            <select name="motivo_sin" required
+                                    style="border:1px solid #d1d5db; border-radius:6px; padding:8px; font-size:14px;">
+                                <option value="1">Factura mal emitida</option>
+                                <option value="3">Datos de emisión incorrectos</option>
+                                <option value="4">Factura o nota devuelta</option>
+                            </select>
+                        @endif
                         <button type="submit" class="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700">Anular</button>
                     </form>
                 @endif

@@ -12,9 +12,9 @@
         .r { text-align: right; }
         .b { font-weight: bold; }
 
-        .marca { position: fixed; top: 38%; left: 0; width: 100%; text-align: center;
-                 font-size: 54px; font-weight: bold; color: #e3e3e3;
-                 transform: rotate(-30deg); line-height: 1.15; }
+         .marca { position: fixed; top: 20%; left: 0; width: 100%; text-align: center;
+         font-size: 46px; font-weight: bold; color: #f0f0f0; z-index: -1;
+         transform: rotate(-30deg); line-height: 1.15; }
 
         .cab td { vertical-align: top; }
         .titulo { font-size: 22px; font-weight: bold; text-align: center; }
@@ -60,6 +60,7 @@
                 <div class="emisor">
                     <div class="razon">{{ $emisor['razon_social'] }}</div>
                     Casa Matriz<br>
+                    No. Punto de Venta {{ (int) ($factura->codigo_punto_venta ?? config('sin.punto_venta')) }}<br>
 
                     {{ $emisor['direccion'] }}<br>
 
