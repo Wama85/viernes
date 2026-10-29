@@ -2,6 +2,26 @@
     $p = $producto ?? null;
     $selectClase = 'mt-1 block w-full border-gray-300 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300 focus:border-indigo-500 focus:ring-indigo-500 rounded-md shadow-sm';
     $numero = fn ($n) => rtrim(rtrim(number_format((float) $n, 2, '.', ''), '0'), '.');
+
+    // Solo se ofrecen productos de las actividades vigentes de la empresa (portal de impuestos).
+    // Se puede cambiar con 'actividades_propias' en config/sin.php.
+    $actividadesPropias = array_map('strval', config('sin.actividades_propias', [
+        '9511000', '4741100', '6311000', '6202000',
+    ]));
+
+    $seleccionadoSin = (string) old('id_producto_sin', $p->id_producto_sin ?? '');
+
+    // Los favoritos se marcan con ★ en el buscador del SIN.
+    $favoritosSin = \App\Modules\Productos\Models\ProductoSin::where('favorito', true)->pluck('id_producto_sin')->map(fn ($id) => (string) $id)->all();
+
+    // Solo productos de tus actividades; se conserva el que ya está elegido aunque sea de otra.
+    $opcionesSinFav = collect($opcionesSin)
+        ->filter(fn ($o) => ! $actividadesPropias
+            || in_array((string) $o['actividad'], $actividadesPropias, true)
+            || (string) $o['id'] === $seleccionadoSin)
+        ->map(fn ($o) => $o + ['favorito' => in_array((string) $o['id'], $favoritosSin, true)])
+        ->values()
+        ->all();
 @endphp
 
 <div data-resumen class="val-resumen" hidden></div>
@@ -10,8 +30,8 @@
     Los campos marcados con <span class="text-red-600 font-bold">*</span> son obligatorios.
 </p>
 
-{{-- Producto del SIN (con buscador) --}}
-<div x-data="selectorProductoSin(@js($opcionesSin), @js((string) old('id_producto_sin', $p->id_producto_sin ?? '')))"
+{{-- Producto del SIN (con buscador y favoritos) --}}
+<div x-data="selectorProductoSin(@js($opcionesSinFav), @js((string) old('id_producto_sin', $p->id_producto_sin ?? '')))"
      @click.outside="cerrar()"
      class="relative" data-campo>
     <label for="producto_sin_buscar" class="block text-sm font-medium text-gray-700 dark:text-gray-300">
@@ -44,22 +64,36 @@
     <div x-show="abierto" x-cloak x-ref="lista"
          class="absolute z-30 mt-1 w-full max-h-72 overflow-y-auto rounded-md border border-gray-200 bg-white shadow-lg dark:border-gray-700 dark:bg-gray-800">
         <template x-for="(o, i) in visibles" :key="o.id">
-            <button type="button" @mousedown.prevent @click="elegir(o)" @mouseenter="indice = i"
-                    :data-activo="i === indice"
-                    :class="i === indice ? 'bg-indigo-50 dark:bg-gray-700' : ''"
-                    class="block w-full px-3 py-2 text-left">
-                <span class="block text-sm font-medium text-gray-800 dark:text-gray-100" x-text="o.nombre"></span>
-                <span class="block text-xs text-gray-500 dark:text-gray-400">
-                    Código <span x-text="o.codigo"></span> · Actividad <span x-text="o.actividad"></span>
-                    <span x-show="o.usado" class="text-amber-600"> · ★ usado antes</span>
-                </span>
-            </button>
+            <div class="flex items-stretch" :data-activo="i === indice" @mouseenter="indice = i"
+                 :class="i === indice ? 'bg-indigo-50 dark:bg-gray-700' : ''">
+                <button type="button" @mousedown.prevent @click="elegir(o)" class="block flex-1 px-3 py-2 text-left">
+                    <span class="block text-sm font-medium text-gray-800 dark:text-gray-100" x-text="o.nombre"></span>
+                    <span class="block text-xs text-gray-500 dark:text-gray-400">
+                        Código <span x-text="o.codigo"></span> · Actividad <span x-text="o.actividad"></span>
+                        <span x-show="o.usado" class="text-amber-600"> · usado antes</span>
+                    </span>
+                </button>
+                <button type="button" @mousedown.prevent @click.stop="alternarFavorito(o)"
+                        :title="o.favorito ? 'Quitar de mis favoritos' : 'Agregar a mis favoritos'"
+                        class="px-3 text-xl leading-none"
+                        :style="o.favorito ? 'color:#d97706' : 'color:#9ca3af'"
+                        x-text="o.favorito ? '★' : '☆'"></button>
+            </div>
         </template>
 
-        <p x-show="visibles.length === 0" class="px-3 py-2 text-sm text-gray-500">Sin resultados.</p>
+        <p x-show="visibles.length === 0" class="px-3 py-2 text-sm text-gray-500">
+            <span x-show="soloFavoritos">Sin resultados entre tus favoritos.</span>
+            <span x-show="!soloFavoritos">Sin resultados.</span>
+        </p>
         <p x-show="total > visibles.length" class="px-3 py-2 text-xs text-gray-500 border-t border-gray-100 dark:border-gray-700">
             Mostrando los primeros <span x-text="visibles.length"></span> de <span x-text="total"></span>. Escribe más para afinar.
         </p>
+        <div x-show="hayFavoritos" class="px-3 py-2 text-xs border-t border-gray-100 dark:border-gray-700">
+            <button type="button" @mousedown.prevent @click="alternarModo()" class="text-indigo-600 hover:underline">
+                <span x-show="soloFavoritos">Buscar en todo el catálogo</span>
+                <span x-show="!soloFavoritos">Ver solo mis favoritos</span>
+            </button>
+        </div>
     </div>
 
     <div class="val-pie"><p data-mensaje class="val-msg" hidden></p></div>
@@ -187,6 +221,8 @@
 <script>
     document.addEventListener('alpine:init', () => {
         const normalizar = (t) => String(t).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+        const token = "{{ csrf_token() }}";
+        const rutaFavorito = "{{ url('productos-sin') }}/";
 
         Alpine.data('selectorProductoSin', (opciones, seleccionado) => ({
             opciones: opciones.map((o) => ({ ...o, buscable: normalizar(o.codigo + ' ' + o.actividad + ' ' + o.nombre) })),
@@ -196,19 +232,58 @@
             indice: 0,
             visibles: [],
             total: 0,
+            verTodo: false,
 
             get etiquetaActual() {
                 const o = this.opciones.find((x) => String(x.id) === String(this.valor));
                 return o ? o.nombre + ' (' + o.codigo + ')' : '';
             },
 
+            get hayFavoritos() {
+                return this.opciones.some((o) => o.favorito);
+            },
+
+            /** Con favoritos marcados, el buscador empieza solo con ellos. */
+            get soloFavoritos() {
+                return this.hayFavoritos && !this.verTodo;
+            },
+
             filtrar() {
+                const base = this.soloFavoritos ? this.opciones.filter((o) => o.favorito) : this.opciones;
                 const palabras = normalizar(this.busqueda).split(/\s+/).filter(Boolean);
-                const coincidencias = palabras.length
-                    ? this.opciones.filter((o) => palabras.every((p) => o.buscable.includes(p)))
-                    : this.opciones;
+                let coincidencias = palabras.length
+                    ? base.filter((o) => palabras.every((p) => o.buscable.includes(p)))
+                    : base;
+
+                // En el catálogo completo, los favoritos salen primero.
+                if (!this.soloFavoritos) {
+                    coincidencias = [...coincidencias].sort((a, b) => Number(!!b.favorito) - Number(!!a.favorito));
+                }
+
                 this.total = coincidencias.length;
                 this.visibles = coincidencias.slice(0, 50);
+            },
+
+            alternarModo() {
+                this.verTodo = !this.verTodo;
+                this.indice = 0;
+                this.filtrar();
+            },
+
+            async alternarFavorito(o) {
+                try {
+                    const r = await fetch(rutaFavorito + o.id + '/favorito', {
+                        method: 'POST',
+                        headers: { 'X-CSRF-TOKEN': token, 'Accept': 'application/json' },
+                    });
+
+                    if (!r.ok) throw new Error();
+
+                    o.favorito = (await r.json()).favorito;
+                    this.filtrar();
+                } catch (e) {
+                    alert('No se pudo guardar el favorito. Intenta de nuevo.');
+                }
             },
 
             abrir() {

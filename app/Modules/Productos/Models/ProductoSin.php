@@ -14,5 +14,6 @@ class ProductoSin extends Model
         'codigo_actividad',
         'descripcion_producto_sin',
         'producto_sin_estado',
+        'favorito',
     ];
 }

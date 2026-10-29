@@ -12,6 +12,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
+use App\Support\TotalFacturable;
 
 class CotizacionController extends Controller
 {
@@ -291,6 +292,7 @@ class CotizacionController extends Controller
     /**
      * Arma las líneas a guardar y el total. La descripción y la unidad se copian
      * del producto en el servidor; el precio y el descuento vienen del formulario.
+     * El total debe poder facturarse al centavo con la v3 del SIN.
      */
     private function prepararDetalles(array $items): array
     {
@@ -342,6 +344,20 @@ class CotizacionController extends Controller
         if ($total > self::IMPORTE_MAXIMO) {
             throw ValidationException::withMessages([
                 'items' => 'El total de la cotización supera el máximo permitido (99,999,999.99).',
+            ]);
+        }
+
+        if (! TotalFacturable::esAlcanzable($total)) {
+            [$menor, $mayor] = TotalFacturable::enterosCercanos($total);
+            $sugeridos = collect([$menor, $mayor])
+                ->filter()
+                ->map(fn ($v) => 'Bs ' . number_format($v, 2))
+                ->implode(' o ');
+
+            throw ValidationException::withMessages([
+                'items' => 'El total Bs ' . number_format($total, 2)
+                    . ' no se puede facturar exacto con el SIN (quedaría con 1 centavo de diferencia). '
+                    . 'Ajusta un precio para que el total sea, por ejemplo, ' . $sugeridos . '.',
             ]);
         }
 

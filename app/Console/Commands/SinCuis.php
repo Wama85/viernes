@@ -48,7 +48,7 @@ class SinCuis extends Command
 
         $vigencia = Carbon::parse($datos->fechaVigencia)->setTimezone(config('app.timezone'));
 
-        Cuis::updateOrCreate(
+        $guardado = Cuis::updateOrCreate(
             ['cuis' => $datos->codigo],
             [
                 'codigo_ambiente'    => config('sin.ambiente'),
@@ -58,6 +58,13 @@ class SinCuis extends Command
                 'vigente'            => true,
             ]
         );
+
+        // Solo el CUIS que el SIN acaba de confirmar queda vigente para este punto de venta.
+        Cuis::where('codigo_ambiente', config('sin.ambiente'))
+            ->where('codigo_sucursal', config('sin.sucursal'))
+            ->where('codigo_punto_venta', config('sin.punto_venta'))
+            ->where('id_sin_cuis', '!=', $guardado->id_sin_cuis)
+            ->update(['vigente' => false]);
 
         $this->info(
             ($yaVigente ? 'Ya existía un CUIS vigente; se conserva. ' : 'CUIS nuevo guardado. ')

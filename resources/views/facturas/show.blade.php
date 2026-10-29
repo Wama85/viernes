@@ -93,12 +93,29 @@
                                 </tr>
                             @endforeach
                         </tbody>
+
                         <tfoot>
+                            @php
+                                $sumaItems = round($factura->detalles->sum('subtotal'), 2);
+                                $ajuste = round($factura->monto_total - $sumaItems, 2);
+                            @endphp
+                            @if (abs($ajuste) >= 0.01)
+                                <tr class="border-t dark:border-gray-700">
+                                    <td colspan="4" class="px-3 py-2 text-right">Suma de ítems (Bs)</td>
+                                    <td class="px-3 py-2 text-right">{{ number_format($sumaItems, 2) }}</td>
+                                </tr>
+                                <tr>
+                                    <td colspan="4" class="px-3 py-2 text-right">Ajuste por redondeo (Bs)</td>
+                                    <td class="px-3 py-2 text-right">{{ ($ajuste > 0 ? '+' : '-') . number_format(abs($ajuste), 2) }}</td>
+                                </tr>
+                            @endif
                             <tr class="border-t dark:border-gray-700 font-bold">
                                 <td colspan="4" class="px-3 py-2 text-right">TOTAL (Bs)</td>
                                 <td class="px-3 py-2 text-right">{{ number_format($factura->monto_total, 2) }}</td>
                             </tr>
                         </tfoot>
+
+
                     </table>
                 </div>
             </div>

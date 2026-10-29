@@ -23,7 +23,10 @@ class SinFacturaEmisionService
     private const TIPO_DOC_CI = 1;
     private const ESTADO_VALIDADA = 908;
     private const ESTADO_RECHAZADA = 902;
-    private const ERROR_INTERNO_SIN = -1;
+    private const ERROR_INTERNO_SIN = 2;
+
+    /** Diferencia máxima, en Bs, entre el IVA enviado y el 13 % exacto del neto (probar con 0.01; si el SIN rechaza, poner 0). */
+    private const TOLERANCIA_IVA = 0;
 
     /** Forma de pago del sistema => código de ParametricaTipoMetodoPago del SIN. */
     private const METODOS_PAGO = ['EFECTIVO' => 1, 'CHEQUE' => 3, 'TRANSFERENCIA' => 7, 'QR' => 7];
@@ -90,7 +93,16 @@ class SinFacturaEmisionService
         }
 
         $detalles = $this->detalles($factura);
-        $montoTotal = round(array_sum(array_column($detalles, 'subTotal')), 2);
+
+        // Los precios del sistema ya incluyen el IVA (13%); la v3 pide precios netos y el IVA aparte.
+        // Cada ítem se calcula como lo valida el SIN y el IVA es exactamente el 13 % del neto.
+        // Los centavos de redondeo se absorben con el descuento adicional, para que el total
+        // facturado sea el de la cotización.
+        $totalConIva = round(array_sum(array_column($detalles, 'subTotal')), 2);
+        $detalles = $this->aNeto($detalles, $totalConIva);
+        $neto = round(array_sum(array_column($detalles, 'subTotal')), 2);
+
+        [$descuentoAdicional, $iva, $montoTotal] = $this->ajusteFiscal($neto, $totalConIva);
 
         // La fecha de emisión es la del envío: el SIN la exige cercana a "ahora".
         $fecha = now();
@@ -140,8 +152,9 @@ class SinFacturaEmisionService
             'codigoMoneda'                 => self::MONEDA_BOLIVIANO,
             'tipoCambio'                   => 1.0,
             'montoTotalMoneda'             => $montoTotal,
+            'ivaFijo'                      => $iva,
             'montoGiftCard'                => null,
-            'descuentoAdicional'           => null,
+            'descuentoAdicional'           => $descuentoAdicional > 0 ? $descuentoAdicional : null,
             'codigoExcepcion'              => null,
             'cafc'                         => null,
             'leyenda'                      => $leyenda,
@@ -199,7 +212,6 @@ class SinFacturaEmisionService
 
         return $factura->fresh();
     }
-
     /** @return array{0: bool, 1: ?int, 2: ?string, 3: string} */
     private function enviar(string $xml, string $cufd, string $cuis): array
     {
@@ -299,6 +311,81 @@ class SinFacturaEmisionService
         }
 
         return $filas;
+    }
+
+    /**
+     * Convierte los ítems (precios con IVA incluido) a netos, calculando cada uno como lo valida el SIN:
+     * subtotal = cantidad × precio neto unitario − descuento. El IVA se obtiene luego como la
+     * diferencia entre el total de la cotización y la suma de los netos.
+     */
+    private function aNeto(array $detalles, float $totalConIva): array
+    {
+        foreach ($detalles as $i => $d) {
+            $precioNeto = round($d['precioUnitario'] / 1.13, 2);
+            $descuentoNeto = round($d['montoDescuento'] / 1.13, 2);
+
+            $detalles[$i]['precioUnitario'] = $precioNeto;
+            $detalles[$i]['montoDescuento'] = $descuentoNeto;
+            $detalles[$i]['subTotal'] = round($d['cantidad'] * $precioNeto - $descuentoNeto, 2);
+        }
+
+        return $detalles;
+    }
+
+    /**
+     * Descuento adicional (0 a 10 centavos) que deja el total de la factura lo más cerca posible del
+     * total de la cotización, con el IVA siempre igual al 13 % del neto. Si dos totales quedan igual de
+     * cerca, prefiere el que no cobra de más.
+     */
+    /**
+     * Calcula [descuento adicional, IVA, total] para que el total facturado sea el de la cotización.
+     * 1) Busca un descuento adicional (0 a 10 centavos) con el que neto + 13 % exacto dé el total.
+     * 2) Si no existe (p. ej. 100,00), usa un IVA que difiere hasta TOLERANCIA_IVA del 13 % exacto.
+     * 3) Si tampoco, deja el total más cercano sin cobrar de más.
+     *
+     * @return array{0: float, 1: float, 2: float}
+     */
+    private function ajusteFiscal(float $neto, float $totalConIva): array
+    {
+        $mejor = null;
+
+        for ($centavos = 0; $centavos <= 10; $centavos++) {
+            $descuento = $centavos / 100;
+            $totalNeto = round($neto - $descuento, 2);
+            $iva = round($totalNeto * 0.13, 2);
+            $total = round($totalNeto + $iva, 2);
+
+            if (abs($total - $totalConIva) < 0.005) {
+                return [$descuento, $iva, $total];
+            }
+        }
+
+        if (self::TOLERANCIA_IVA > 0) {
+            for ($centavos = 0; $centavos <= 10; $centavos++) {
+                $descuento = $centavos / 100;
+                $totalNeto = round($neto - $descuento, 2);
+                $ivaExacto = round($totalNeto * 0.13, 2);
+                $iva = round($totalConIva - $totalNeto, 2);
+
+                if (abs($iva - $ivaExacto) <= self::TOLERANCIA_IVA + 0.00001) {
+                    return [$descuento, $iva, $totalConIva];
+                }
+            }
+        }
+
+        for ($centavos = 0; $centavos <= 10; $centavos++) {
+            $descuento = $centavos / 100;
+            $totalNeto = round($neto - $descuento, 2);
+            $iva = round($totalNeto * 0.13, 2);
+            $total = round($totalNeto + $iva, 2);
+            $puntaje = abs($total - $totalConIva) + ($total > $totalConIva ? 0.0001 : 0);
+
+            if ($mejor === null || $puntaje < $mejor[3] - 0.00001) {
+                $mejor = [$descuento, $iva, $total, $puntaje];
+            }
+        }
+
+        return [$mejor[0], $mejor[1], $mejor[2]];
     }
 
     private function actividadesHabilitadas(): array

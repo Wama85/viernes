@@ -151,9 +151,21 @@
                 <div class="son"><span class="b">Son:</span> {{ $enLetras }}</div>
             </td>
             <td style="width: 42%; vertical-align: top;">
+                @php
+                    $sumaItems = round(collect($lineas)->sum('subtotal'), 2);
+                    $descuentoItems = round(collect($lineas)->sum('descuento'), 2);
+                    $subtotalMostrado = round($sumaItems + $descuentoItems, 2);
+                    // Diferencia entre el total enviado al SIN y la suma de los ítems (redondeo del neto/IVA de la v3).
+                    $ajuste = round($total - $sumaItems, 2);
+                    // Si el total es menor, la diferencia es el descuento adicional que va en el XML.
+                    $descuentoMostrado = $ajuste < 0 ? round($descuentoItems - $ajuste, 2) : $descuentoItems;
+                @endphp
                 <table class="totales">
-                    <tr><td class="r b">SUBTOTAL Bs</td><td class="r" style="width: 28%;">{{ number_format($subtotalBruto, 2) }}</td></tr>
-                    <tr><td class="r b">DESCUENTO Bs</td><td class="r">{{ number_format($descuentoTotal, 2) }}</td></tr>
+                    <tr><td class="r b">SUBTOTAL Bs</td><td class="r" style="width: 28%;">{{ number_format($subtotalMostrado, 2) }}</td></tr>
+                    <tr><td class="r b">DESCUENTO Bs</td><td class="r">{{ number_format($descuentoMostrado, 2) }}</td></tr>
+                    @if ($ajuste > 0)
+                        <tr><td class="r b">AJUSTE POR REDONDEO Bs</td><td class="r">{{ number_format($ajuste, 2) }}</td></tr>
+                    @endif
                     <tr><td class="r b">TOTAL Bs</td><td class="r">{{ number_format($total, 2) }}</td></tr>
                     <tr><td class="r b">MONTO GIFT CARD Bs</td><td class="r">0.00</td></tr>
                     <tr class="caja-tot"><td class="r b">MONTO A PAGAR Bs</td><td class="r b">{{ number_format($total, 2) }}</td></tr>

@@ -15,13 +15,15 @@ use App\Modules\Productos\Http\Controllers\MovimientoStockController;
 use App\Modules\Productos\Http\Controllers\ProductoController;
 use App\Modules\Recibos\Http\Controllers\ReciboController;
 use App\Modules\Usuarios\Http\Controllers\UsuarioController;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\RespaldoController;
 use App\Modules\Consultas\Http\Controllers\ConsultaController;
+use App\Modules\Productos\Http\Controllers\ProductoSinFavoritoController;
 
 
 Route::get('/', function () {
-    return auth()->check()
+    return Auth::check()
         ? redirect()->route('dashboard')
         : redirect()->route('login');
 });
@@ -93,7 +95,7 @@ Route::middleware('auth')->group(function () {
 
     // Consultas
     Route::get('consultas', [ConsultaController::class, 'index'])->name('consultas.index');
-    
+
 });
 
 /*
@@ -161,5 +163,6 @@ Route::get('/respaldos/descargar/{archivo}', [RespaldoController::class, 'descar
     ->middleware(['auth', 'signed'])
     ->name('respaldos.descargar');
 
-
+Route::post('productos-sin/{productoSin}/favorito', [ProductoSinFavoritoController::class, 'alternar'])
+    ->name('productos-sin.favorito');
 require __DIR__ . '/auth.php';

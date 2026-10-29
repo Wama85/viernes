@@ -15,6 +15,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
 use App\Modules\Facturas\Services\FacturaPdfService;
+use App\Support\TotalFacturable;
 use Throwable;
 
 class FacturaController extends Controller
@@ -73,6 +74,18 @@ class FacturaController extends Controller
             }
 
             $items = $this->resolverItems($bloqueada, $request->input('items'));
+
+            // El total de los ítems elegidos debe poder facturarse al centavo con la v3 del SIN.
+            $totalItems = round($items->sum('subtotal'), 2);
+
+            if (! TotalFacturable::esAlcanzable($totalItems)) {
+                throw ValidationException::withMessages([
+                    'items' => 'La suma de los ítems elegidos (Bs ' . number_format($totalItems, 2)
+                        . ') no se puede facturar exacta con el SIN: quedaría con 1 centavo de diferencia. '
+                        . 'Elige otra combinación de ítems para esta factura (por ejemplo, agrega o quita uno).',
+                ]);
+            }
+
             $cliente = $bloqueada->cliente()->with(['tipoDocumento', 'correos'])->first();
 
             $factura = Factura::create([
@@ -260,7 +273,7 @@ class FacturaController extends Controller
 
     private function verificarPropiedad(Cotizacion $cotizacion): void
     {
-        $usuario = auth()->user();
+        $usuario = request()->user();
 
         abort_unless(
             (int) $usuario->id_rol === 1 || $cotizacion->id_usuario === $usuario->id_usuario,

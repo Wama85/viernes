@@ -17,6 +17,7 @@ class SinPaquete extends Command
                             {--motivo=0 : Motivo 1 a 7 (0 = recorre los 7 motivos)}
                             {--cantidad=1 : Paquetes logrados por motivo}
                             {--facturas=1 : Facturas por paquete (máximo 500)}
+                            {--evento-de=0 : Toma el evento libre de este otro motivo (0 = del mismo motivo)}
                             {--pv= : Punto de venta (por defecto el del .env)}';
 
     protected $description = 'Envía paquetes de facturas fuera de línea al SIN (Etapa VI)';
@@ -31,6 +32,7 @@ class SinPaquete extends Command
         $motivos = (int) $this->option('motivo') > 0 ? [(int) $this->option('motivo')] : range(1, 7);
         $cantidad = max(1, (int) $this->option('cantidad'));
         $facturas = max(1, min(500, (int) $this->option('facturas')));
+        $eventoDe = (int) $this->option('evento-de');
 
         $enviados = 0;
         $problemas = 0;
@@ -38,11 +40,14 @@ class SinPaquete extends Command
         foreach ($motivos as $motivo) {
             $logrados = 0;
             $fallasSeguidas = 0;
+            $motivoEvento = $eventoDe > 0 ? $eventoDe : $motivo;
 
             while ($logrados < $cantidad) {
+                // Solo eventos dentro del plazo del SIN: el paquete debe enviarse antes de 48 h del fin del evento.
                 $evento = SinEventoPrueba::where('codigo_punto_venta', $pv)
-                    ->where('codigo_motivo', $motivo)
+                    ->where('codigo_motivo', $motivoEvento)
                     ->where('estado', SinEventoPrueba::REGISTRADO)
+                    ->where('fecha_fin', '>=', now()->subHours(40))
                     ->whereNotIn('id_sin_evento_prueba', SinPaquetePrueba::query()
                         ->whereIn('estado', [SinPaquetePrueba::ENVIADO, SinPaquetePrueba::VALIDADO])
                         ->select('id_sin_evento_prueba'))
@@ -50,7 +55,7 @@ class SinPaquete extends Command
                     ->first();
 
                 if (! $evento) {
-                    $this->warn("Motivo {$motivo}: no quedan eventos libres (faltan " . ($cantidad - $logrados) . "). Registra más con: php artisan sin:evento --pv={$pv} --motivo={$motivo} --cantidad=N");
+                    $this->warn("Motivo {$motivo}: no quedan eventos libres del motivo {$motivoEvento} dentro del plazo de 48 h (faltan " . ($cantidad - $logrados) . "). Registra más con: php artisan sin:evento --pv={$pv} --motivo={$motivoEvento} --cantidad=N");
                     $problemas++;
 
                     break;
@@ -65,8 +70,9 @@ class SinPaquete extends Command
                 }
 
                 $linea = sprintf(
-                    'Motivo %d evento #%d -> %s (código %s) recepción: %s | %d facturas | %s',
+                    'Motivo %d (evento del motivo %d) evento #%d -> %s (código %s) recepción: %s | %d facturas | %s',
                     $motivo,
+                    $motivoEvento,
                     $evento->id_sin_evento_prueba,
                     $paquete->estado,
                     $paquete->codigo_estado ?? '-',
