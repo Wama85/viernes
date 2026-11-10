@@ -46,7 +46,10 @@ class CotizacionRequest extends FormRequest
             $observaciones = $observaciones === '' ? null : $observaciones;
         }
 
-        $cambios = ['observaciones' => $observaciones];
+        $cambios = [
+            'observaciones'     => $observaciones,
+            'descuento_general' => $numero($this->input('descuento_general')),
+        ];
 
         $vigencia = $this->input('vigencia_cantidad');
         if (is_string($vigencia)) {
@@ -106,6 +109,9 @@ class CotizacionRequest extends FormRequest
 
             'observaciones'   => ['nullable', 'string', 'max:1000', 'regex:' . self::TEXTO_SEGURO],
             'confirmar_stock' => ['nullable', 'boolean'],
+
+            // Descuento sobre el total: monto en Bs o porcentaje.
+            'descuento_general' => $this->descuento(),
         ];
 
         if (! $itemsBloqueados) {
@@ -124,12 +130,33 @@ class CotizacionRequest extends FormRequest
                 })],
                 'items.*.cantidad'              => $this->numero(true, '0.01', self::CANTIDAD_MAXIMA),
                 'items.*.precio_unitario'       => $this->numero(true, '0', self::MONTO_MAXIMO),
-                'items.*.descuento'             => $this->numero(false, '0', self::MONTO_MAXIMO),
+                'items.*.descuento'             => $this->descuento(),
                 'items.*.descripcion_adicional' => ['nullable', 'string', 'max:300', 'regex:' . self::TEXTO_SEGURO],
             ];
         }
 
         return $reglas;
+    }
+
+    /** Descuento de línea: monto en Bs («12.50») o porcentaje («10%»), hasta 2 decimales. */
+    private function descuento(): array
+    {
+        return [
+            'bail',
+            'nullable',
+            'regex:/^\d+(\.\d{1,2})?%?$/',
+            function (string $atributo, mixed $valor, \Closure $fallar) {
+                $valor = (string) $valor;
+
+                if (str_ends_with($valor, '%')) {
+                    if ((float) $valor > 100) {
+                        $fallar('El porcentaje de descuento no puede superar 100%.');
+                    }
+                } elseif ((float) $valor > (float) self::MONTO_MAXIMO) {
+                    $fallar('El descuento máximo es 9,999,999.99.');
+                }
+            },
+        ];
     }
 
     /** Número con hasta 2 decimales, sin signo, con mínimo y tope. */
@@ -183,10 +210,9 @@ class CotizacionRequest extends FormRequest
             'items.*.precio_unitario.min'      => 'El precio no puede ser negativo.',
             'items.*.precio_unitario.max'      => 'El precio máximo es 9,999,999.99.',
 
-            'items.*.descuento.regex'   => $formato,
-            'items.*.descuento.numeric' => $formato,
-            'items.*.descuento.min'     => 'El descuento no puede ser negativo.',
-            'items.*.descuento.max'     => 'El descuento máximo es 9,999,999.99.',
+            'descuento_general.regex' => 'Escribe un monto en Bs (por ejemplo 50) o un porcentaje (por ejemplo 10%).',
+
+            'items.*.descuento.regex' => 'Escribe un monto en Bs (por ejemplo 12.50) o un porcentaje (por ejemplo 10%).',
 
             'items.*.descripcion_adicional.max'   => 'La descripción adicional admite como máximo 300 caracteres.',
             'items.*.descripcion_adicional.regex' => 'La descripción adicional tiene caracteres no permitidos (por ejemplo < o >).',

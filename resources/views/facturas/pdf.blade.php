@@ -113,6 +113,14 @@
             <td><span class="b">NIT/CI/CEX:</span> {{ $documento }}</td>
             <td><span class="b">COD. CLIENTE:</span> {{ $factura->cliente_documento }}</td>
         </tr>
+                <tr>
+            <td><span class="b">MÉTODO DE PAGO:</span> {{ $factura->forma_pago_etiqueta }}</td>
+            <td>
+                @if ($factura->numero_tarjeta)
+                    <span class="b">NÚMERO DE TARJETA:</span> {{ $factura->numero_tarjeta }}
+                @endif
+            </td>
+        </tr>
     </table>
 
     <div class="linea"></div>

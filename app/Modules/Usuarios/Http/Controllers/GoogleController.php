@@ -8,17 +8,21 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
 use Laravel\Socialite\Facades\Socialite;
+use Laravel\Socialite\Two\InvalidStateException;
 use Throwable;
 
 class GoogleController extends Controller
 {
     /** Envía al usuario a la pantalla de Google (siempre pregunta qué cuenta usar). */
-    public function redirect()
-    {
-        return Socialite::driver('google')
-            ->with(['prompt' => 'select_account'])
-            ->redirect();
-    }
+public function redirect()
+{
+    /** @var \Laravel\Socialite\Two\GoogleProvider $google */
+    $google = Socialite::driver('google');
+
+    return $google
+        ->with(['prompt' => 'select_account'])
+        ->redirect();
+}
 
     /** Google devuelve aquí. Solo entra quien ya está registrado con ese correo y está activo. */
     public function callback(Request $request)
@@ -30,8 +34,13 @@ class GoogleController extends Controller
 
         try {
             $google = Socialite::driver('google')->user();
+        } catch (InvalidStateException $e) {
+            // La sesión del navegador se perdió durante el viaje a Google (pestaña vieja, otro dominio, «atrás»).
+            Log::notice('Google login: la verificación de seguridad (state) no coincide; la sesión no sobrevivió al viaje a Google.');
+
+            return $this->rechazar('La verificación con Google venció. Pulsa de nuevo «Iniciar sesión con Google» (si no funciona, abre el sistema en una pestaña nueva).');
         } catch (Throwable $e) {
-            Log::warning('Google login: ' . $e->getMessage());
+            Log::warning('Google login: ' . get_class($e) . ' — ' . $e->getMessage());
 
             return $this->rechazar('No se pudo iniciar sesión con Google. Inténtalo de nuevo.');
         }

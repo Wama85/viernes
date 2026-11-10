@@ -7,6 +7,7 @@ use App\Modules\Clientes\Models\Cliente;
 use App\Modules\Cotizaciones\Http\Requests\CotizacionRequest;
 use App\Modules\Cotizaciones\Models\Cotizacion;
 use App\Modules\Productos\Models\Producto;
+use App\Modules\Sin\Services\SinNitService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -18,6 +19,10 @@ class CotizacionController extends Controller
 {
     /** Importe máximo de una línea y del total (columnas decimal(10,2)). */
     private const IMPORTE_MAXIMO = 99999999.99;
+
+    public function __construct(private SinNitService $nit)
+    {
+    }
 
     public function index(Request $request)
     {
@@ -43,7 +48,7 @@ class CotizacionController extends Controller
     public function store(CotizacionRequest $request)
     {
         // Primero se calculan las líneas y el total; si algo falla, no se toca la base.
-        [$filas, $total] = $this->prepararDetalles($request->items);
+        [$filas, $total, $descGeneral] = $this->prepararDetalles($request->items, $request->input('descuento_general'));
 
         // Stock insuficiente: se avisa y se pide confirmación (no bloquea).
         if ($aviso = $this->advertirStock($request, $filas)) {
@@ -52,7 +57,7 @@ class CotizacionController extends Controller
 
         $esAdmin = $this->esAdmin();
 
-        $cotizacion = DB::transaction(function () use ($request, $filas, $total, $esAdmin) {
+        $cotizacion = DB::transaction(function () use ($request, $filas, $total, $descGeneral, $esAdmin) {
             $anio = now()->year;
             $numero = (Cotizacion::where('anio', $anio)->lockForUpdate()->max('numero') ?? 0) + 1;
 
@@ -68,6 +73,7 @@ class CotizacionController extends Controller
                 'fecha_aprobacion'  => $esAdmin ? now() : null,
                 'observaciones'     => $request->observaciones,
                 'total'             => $total,
+                'descuento_general' => $descGeneral,
             ]);
 
             $cotizacion->detalles()->createMany($filas);
@@ -89,7 +95,13 @@ class CotizacionController extends Controller
             'creador', 'aprobador',
         ]);
 
-        return view('cotizaciones.show', compact('cotizacion'));
+        // Aviso temprano: si el NIT del cliente no existe en el SIN, la factura lo rechazaría.
+        $nitEstado = in_array($cotizacion->estado, [Cotizacion::PENDIENTE, Cotizacion::APROBADA], true)
+            && $this->esNit($cotizacion->cliente)
+                ? $this->nit->verificar((string) $cotizacion->cliente->documento_identidad)
+                : null;
+
+        return view('cotizaciones.show', compact('cotizacion', 'nitEstado'));
     }
 
     public function edit(Cotizacion $cotizacion)
@@ -122,16 +134,17 @@ class CotizacionController extends Controller
         $itemsBloqueados = $cotizacion->tieneRecibos();
         $filas = [];
         $total = (float) $cotizacion->total;
+        $descGeneral = (float) $cotizacion->descuento_general;
 
         if (! $itemsBloqueados) {
-            [$filas, $total] = $this->prepararDetalles($request->items);
+            [$filas, $total, $descGeneral] = $this->prepararDetalles($request->items, $request->input('descuento_general'));
 
             if ($aviso = $this->advertirStock($request, $filas)) {
                 return $aviso;
             }
         }
 
-        DB::transaction(function () use ($request, $cotizacion, $filas, $total, $itemsBloqueados) {
+        DB::transaction(function () use ($request, $cotizacion, $filas, $total, $descGeneral, $itemsBloqueados) {
             $datos = [
                 'id_cliente'    => $request->id_cliente,
                 'observaciones' => $request->observaciones,
@@ -139,6 +152,7 @@ class CotizacionController extends Controller
 
             if (! $itemsBloqueados) {
                 $datos['total'] = $total;
+                $datos['descuento_general'] = $descGeneral;
                 // Si cambian los ítems, el cliente debe recibir la cotización de nuevo.
                 $datos['fecha_envio'] = null;
             }
@@ -210,6 +224,12 @@ class CotizacionController extends Controller
         if (! $this->esAdmin() && $cotizacion->id_usuario !== Auth::id()) {
             abort(403);
         }
+    }
+
+    /** Tipo de documento NIT en el catálogo del SIN (código 5). */
+    private function esNit(Cliente $cliente): bool
+    {
+        return (int) $cliente->tipoDocumento?->codigo_sin === 5;
     }
 
     private function calcularVencimiento(Request $request)
@@ -294,7 +314,7 @@ class CotizacionController extends Controller
      * del producto en el servidor; el precio y el descuento vienen del formulario.
      * El total debe poder facturarse al centavo con la v3 del SIN.
      */
-    private function prepararDetalles(array $items): array
+    private function prepararDetalles(array $items, ?string $descuentoGeneralTexto = null): array
     {
         $productos = Producto::whereIn('id_producto', collect($items)->pluck('id_producto'))
             ->get()
@@ -307,8 +327,13 @@ class CotizacionController extends Controller
             $producto = $productos[$item['id_producto']];
             $cantidad = (float) $item['cantidad'];
             $precio = (float) $item['precio_unitario'];
-            $descuento = (float) ($item['descuento'] ?? 0);
             $bruto = round($cantidad * $precio, 2);
+
+            // El descuento puede venir en Bs («12.50») o como porcentaje del importe de la línea («10%»).
+            $textoDescuento = trim((string) ($item['descuento'] ?? ''));
+            $descuento = str_ends_with($textoDescuento, '%')
+                ? round($bruto * (float) rtrim($textoDescuento, '%') / 100, 2)
+                : (float) $textoDescuento;
 
             if ($bruto > self::IMPORTE_MAXIMO) {
                 throw ValidationException::withMessages([
@@ -347,6 +372,10 @@ class CotizacionController extends Controller
             ]);
         }
 
+        // Descuento general sobre el total (monto o %). El total que se guarda ya lo descuenta.
+        $descuentoGeneral = $this->descuentoGeneral($descuentoGeneralTexto, $total);
+        $total = round($total - $descuentoGeneral, 2);
+
         if (! TotalFacturable::esAlcanzable($total)) {
             [$menor, $mayor] = TotalFacturable::enterosCercanos($total);
             $sugeridos = collect([$menor, $mayor])
@@ -361,6 +390,29 @@ class CotizacionController extends Controller
             ]);
         }
 
-        return [$filas, $total];
+        return [$filas, $total, $descuentoGeneral];
+    }
+
+    /** Descuento general en Bs: acepta un monto («50») o un porcentaje («10%») de la suma de ítems. */
+    private function descuentoGeneral(?string $texto, float $totalItems): float
+    {
+        $texto = trim((string) $texto);
+
+        if ($texto === '') {
+            return 0.0;
+        }
+
+        $numero = (float) rtrim($texto, '% ');
+        $descuento = str_ends_with($texto, '%')
+            ? round($totalItems * $numero / 100, 2)
+            : round($numero, 2);
+
+        if ($descuento > 0 && $totalItems - $descuento < 0.10) {
+            throw ValidationException::withMessages([
+                'descuento_general' => 'El descuento general deja la cotización prácticamente en cero. Debe ser menor al total (Bs ' . number_format($totalItems, 2) . ').',
+            ]);
+        }
+
+        return $descuento;
     }
 }

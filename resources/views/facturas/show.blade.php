@@ -23,9 +23,18 @@
                 <div class="p-3 rounded bg-red-100 text-red-800">{{ session('error') }}</div>
             @endif
 
-            @if ($factura->estado_sin !== 'VALIDADA')
+            @if ($factura->estado_sin !== 'VALIDADA' && ! $factura->estaFueraDeLinea())
                 <div class="p-3 rounded bg-yellow-50 text-yellow-800 text-sm border border-yellow-200">
                     Documento interno: todavía no fue validado por el SIN, por lo tanto aún no es una factura válida.
+                </div>
+            @endif
+
+            @if ($factura->estaFueraDeLinea())
+                <div class="p-3 rounded text-sm"
+                     style="background-color:#fffbeb; color:#78350f; border:1px solid #fcd34d;">
+                    <strong>Emitida fuera de línea.</strong> No había comunicación con el SIN. Se puede entregar al cliente
+                    como factura emitida en contingencia; se enviará al SIN en un paquete cuando se recupere la conexión.
+                    Hasta entonces no se puede anular ni enviar por correo.
                 </div>
             @endif
 
@@ -35,7 +44,7 @@
                 </div>
             @endif
 
-            @if ($factura->mensaje_sin && $factura->estado_sin !== 'VALIDADA')
+            @if ($factura->mensaje_sin && $factura->estado_sin !== 'VALIDADA' && ! $factura->estaFueraDeLinea())
                 <div class="p-3 rounded bg-red-50 text-red-800 text-sm border border-red-200">
                     Respuesta del SIN: {{ $factura->mensaje_sin }}
                 </div>
@@ -57,7 +66,7 @@
                 <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
                     <p>Emisión: {{ $factura->fecha_emision->format('d/m/Y H:i') }}</p>
                     <p>Emitida por: {{ $factura->emisor->nombre }}</p>
-                    <p>Forma de pago: {{ $factura->forma_pago }}</p>
+                    <p>Forma de pago: {{ $factura->forma_pago_etiqueta }}</p>
                     <p>Estado en el SIN: <span class="font-semibold">{{ str_replace('_', ' ', $factura->estado_sin) }}</span></p>
                     @if ($factura->aprobador)
                         <p>Aprobada por: {{ $factura->aprobador->nombre }} ({{ $factura->fecha_aprobacion->format('d/m/Y H:i') }})</p>
@@ -97,13 +106,22 @@
                         <tfoot>
                             @php
                                 $sumaItems = round($factura->detalles->sum('subtotal'), 2);
-                                $ajuste = round($factura->monto_total - $sumaItems, 2);
+                                $descuentoAdic = round((float) $factura->descuento_adicional, 2);
+                                $ajuste = round($factura->monto_total - ($sumaItems - $descuentoAdic), 2);
                             @endphp
-                            @if (abs($ajuste) >= 0.01)
+                            @if ($descuentoAdic > 0 || abs($ajuste) >= 0.01)
                                 <tr class="border-t dark:border-gray-700">
                                     <td colspan="4" class="px-3 py-2 text-right">Suma de ítems (Bs)</td>
                                     <td class="px-3 py-2 text-right">{{ number_format($sumaItems, 2) }}</td>
                                 </tr>
+                            @endif
+                            @if ($descuentoAdic > 0)
+                                <tr>
+                                    <td colspan="4" class="px-3 py-2 text-right">Descuento adicional (Bs)</td>
+                                    <td class="px-3 py-2 text-right">-{{ number_format($descuentoAdic, 2) }}</td>
+                                </tr>
+                            @endif
+                            @if (abs($ajuste) >= 0.01)
                                 <tr>
                                     <td colspan="4" class="px-3 py-2 text-right">Ajuste por redondeo (Bs)</td>
                                     <td class="px-3 py-2 text-right">{{ ($ajuste > 0 ? '+' : '-') . number_format(abs($ajuste), 2) }}</td>
@@ -140,7 +158,7 @@
                     </form>
                 @endif
 
-                @if ($esAdmin && $factura->estado === 'APROBADA' && $factura->estado_sin === 'RECHAZADA' && str_contains((string) $factura->mensaje_sin, '1037'))
+                @if ($esAdmin && $factura->estado === 'APROBADA' && in_array($factura->estado_sin, ['NO_ENVIADA', 'RECHAZADA'], true) && (str_contains((string) $factura->mensaje_sin, '1037') || str_contains((string) $factura->mensaje_sin, 'NIT_NO_VALIDO')))
                     <form method="POST" action="{{ route('facturas.enviar-sin', $factura) }}"
                           @submit.prevent="$dispatch('confirmar-accion', { form: $el, titulo: 'Emitir con excepción de NIT', texto: 'El SIN no reconoce el NIT de este cliente. Hazlo solo si el cliente confirma que ese es su NIT y pide la factura igual. Se enviará con código de excepción.', boton: 'Emitir con excepción', peligro: true })">
                         @csrf @method('PATCH')
@@ -158,7 +176,27 @@
                        style="background-color:#0284c7; color:#ffffff; display:inline-block;">Descargar PDF</a>
                 @endif
 
-                @if ($esAdmin && $factura->estado !== 'ANULADA')
+                @if ($factura->numero && filled($factura->xml))
+                    <a href="{{ route('facturas.xml', $factura) }}"
+                       class="px-4 py-2 rounded-md"
+                       style="background-color:#0f766e; color:#ffffff; display:inline-block;">Descargar XML</a>
+                @endif
+
+                @if ($factura->estado === 'APROBADA' && $factura->estado_sin === 'VALIDADA' && filled($factura->xml))
+                    <form method="POST" action="{{ route('facturas.enviar-correo', $factura) }}"
+                          x-data="{ enviando: false }" @submit="enviando = true">
+                        @csrf
+                        <button type="submit" :disabled="enviando"
+                                class="px-4 py-2 bg-[#0c3082] text-white rounded-md hover:bg-[#0a2668] disabled:opacity-60">
+                            <span x-show="!enviando">{{ $factura->fecha_correo ? 'Reenviar por correo' : 'Enviar por correo' }}</span>
+                            <span x-show="enviando" x-cloak>Enviando…</span>
+                        </button>
+                    </form>
+                @endif
+
+                @if ($esAdmin && $factura->estado === 'APROBADA' && $factura->estado_sin === 'VALIDADA' && (int) $factura->reversiones >= 1)
+                    <span class="text-xs text-gray-500">Esta factura ya tuvo una reversión de anulación: el SIN no permite anularla otra vez.</span>
+                @elseif ($esAdmin && $factura->estado !== 'ANULADA')
                     <form method="POST" action="{{ route('facturas.anular', $factura) }}"
                           style="display:flex; align-items:center; gap:8px;"
                           @submit.prevent="$dispatch('confirmar-accion', { form: $el, titulo: 'Anular la factura', texto: 'Vas a anular esta factura. Si el SIN ya la validó, también se anula en el SIN. Sus ítems quedarán libres.', boton: 'Anular', peligro: true })">
@@ -175,8 +213,26 @@
                     </form>
                 @endif
 
+                @if ($esAdmin && $factura->estado === 'ANULADA' && $factura->estado_sin === 'VALIDADA')
+                    @if ((int) $factura->reversiones < 1)
+                        <form method="POST" action="{{ route('facturas.revertir-anulacion', $factura) }}"
+                              @submit.prevent="$dispatch('confirmar-accion', { form: $el, titulo: 'Revertir la anulación', texto: 'La factura vuelve a estar vigente en el SIN y en el sistema, y se descuenta otra vez su stock. El SIN solo permite revertir una anulación UNA vez por factura.', boton: 'Revertir anulación' })">
+                            @csrf @method('PATCH')
+                            <button type="submit" class="px-4 py-2 rounded-md" style="background-color:#d97706; color:#ffffff;">Revertir anulación</button>
+                        </form>
+                    @else
+                        <span class="text-xs text-gray-500">Esta anulación ya se revirtió una vez; el SIN no permite una segunda reversión.</span>
+                    @endif
+                @endif
+
                 <a href="{{ route('cotizaciones.show', $cotizacion) }}" class="text-sm text-gray-600 dark:text-gray-400 hover:underline">Volver a la cotización</a>
             </div>
+
+            @if ($factura->fecha_correo)
+                <p class="text-xs text-gray-500 dark:text-gray-400">
+                    Enviada por correo el {{ $factura->fecha_correo->format('d/m/Y H:i') }} a {{ $factura->correo_enviado_a }} (PDF y XML).
+                </p>
+            @endif
 
             {{-- Tras pulsar «Enviar al SIN» sin autorización, se muestra el documento sin valor legal --}}
             @if ($factura->numero && session('mostrar_pdf'))

@@ -106,6 +106,32 @@ class SinFacturaAnulacionService
         );
     }
 
+    /**
+     * Revierte en el SIN la anulación de una factura real (el SIN lo permite una sola vez por factura).
+     *
+     * @return array{0: bool, 1: ?int, 2: string} [aceptada, codigoEstado, mensaje]
+     */
+    public function revertirFactura(Factura $factura): array
+    {
+        if ($factura->estado !== Factura::ANULADA || $factura->estado_sin !== Factura::SIN_VALIDADA) {
+            throw new RuntimeException('Solo se revierte la anulación de facturas que fueron anuladas en el SIN.');
+        }
+
+        if ((int) $factura->reversiones >= 1) {
+            throw new RuntimeException('Esta factura ya tuvo su reversión; el SIN no permite una segunda.');
+        }
+
+        if (! $factura->cuf) {
+            throw new RuntimeException('La factura no tiene CUF; no se puede revertir la anulación.');
+        }
+
+        return $this->invocar(
+            'reversionAnulacionFactura',
+            'SolicitudServicioReversionAnulacionFactura',
+            $this->comunes($factura->cuf)
+        );
+    }
+
     private function comunes(string $cuf): array
     {
         $cuis = SinCuis::actual();

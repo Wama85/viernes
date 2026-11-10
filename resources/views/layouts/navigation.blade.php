@@ -56,6 +56,8 @@
             ['Auditoría', 'auditoria.index', 'auditoria.*', 'escudo'],
             ['Papelera', 'papelera.index', 'papelera.*', 'papelera'],
             ['Respaldos', 'respaldos.index', 'respaldos.*', 'respaldo'],
+            ['Sincronización SIN', 'sin.sincronizacion', 'sin.*', 'respaldo'],
+            ['Contingencia', 'sin.contingencia', 'sin.contingencia*', 'respaldo'],
         ];
     }
 @endphp

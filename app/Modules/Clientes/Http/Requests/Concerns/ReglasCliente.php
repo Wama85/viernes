@@ -3,6 +3,7 @@
 namespace App\Modules\Clientes\Http\Requests\Concerns;
 
 use App\Modules\Clientes\Models\TipoDocumento;
+use App\Modules\Sin\Services\SinNitService;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Validator;
 
@@ -38,6 +39,17 @@ trait ReglasCliente
             'telefonos'          => collect((array) $this->input('telefonos', []))
                                         ->map(fn ($t) => $limpio($t))->all(),
         ]);
+
+        // Con los NIT especiales 99002 y 99003 el SIN exige un nombre fijo: se completa solo.
+        $tipo = TipoDocumento::find($this->input('id_tipo_documento'));
+
+        if ($tipo && (int) $tipo->codigo_sin === 5) {
+            $fija = SinNitService::razonSocialEspecial((string) $this->input('documento_identidad'));
+
+            if ($fija) {
+                $this->merge(['razon_social' => $fija]);
+            }
+        }
     }
 
     protected function reglasCliente($cliente = null): array
@@ -91,7 +103,8 @@ trait ReglasCliente
 
         [$patron, $mensaje] = match ($codigo) {
             1 => ['/^\d{5,10}$/', 'La cédula de identidad debe tener solo números (de 5 a 10 dígitos).'],
-            5 => ['/^\d{7,13}$/', 'El NIT debe tener solo números (de 7 a 13 dígitos).'],
+            // Los códigos especiales del SIN (99001, 99002 y 99003) son NIT válidos aunque tengan 5 dígitos.
+            5 => ['/^(\d{7,13}|99001|99002|99003)$/', 'El NIT debe tener solo números (de 7 a 13 dígitos), o ser uno de los códigos especiales 99001, 99002 o 99003.'],
             default => ['/^[A-Z0-9.\-]{3,20}$/', 'El documento solo admite letras, números, punto y guion (de 3 a 20 caracteres).'],
         };
 

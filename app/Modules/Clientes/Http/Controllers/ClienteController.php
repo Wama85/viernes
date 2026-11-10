@@ -7,11 +7,18 @@ use App\Modules\Clientes\Http\Requests\StoreClienteRequest;
 use App\Modules\Clientes\Http\Requests\UpdateClienteRequest;
 use App\Modules\Clientes\Models\Cliente;
 use App\Modules\Clientes\Models\TipoDocumento;
+use App\Modules\Sin\Services\SinNitService;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\DB;
 
 class ClienteController extends Controller
 {
+    public function __construct(private SinNitService $nit)
+    {
+    }
+
     public function index()
     {
         $clientes = Cliente::with(['tipoDocumento', 'correos', 'telefonos'])
@@ -64,6 +71,23 @@ class ClienteController extends Controller
 
         return redirect()->route('clientes.index')
             ->with('success', 'Cliente actualizado correctamente.');
+    }
+
+    /** Consulta al SIN si un NIT existe (aviso en el formulario; no impide guardar). */
+    public function verificarNit(Request $request): JsonResponse
+    {
+        $nit = trim((string) $request->query('nit'));
+
+        if ($nit === '') {
+            return response()->json(['estado' => SinNitService::DESCONOCIDO, 'mensaje' => '']);
+        }
+
+        $resultado = $this->nit->verificar($nit);
+
+        return response()->json([
+            'estado'  => $resultado['estado'],
+            'mensaje' => $resultado['mensaje'],
+        ]);
     }
 
     public function cambiarEstado(Cliente $cliente)

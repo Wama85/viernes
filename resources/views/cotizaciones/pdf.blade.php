@@ -171,6 +171,16 @@
                 @endif
             @endforeach
 
+            @if ((float) $cotizacion->descuento_general > 0)
+                <tr>
+                    <td colspan="{{ $conDescuento ? 4 : 3 }}" class="r sin-borde">SUBTOTAL (Bs):</td>
+                    <td class="c">{{ number_format($cotizacion->subtotalItems(), 2) }}</td>
+                </tr>
+                <tr>
+                    <td colspan="{{ $conDescuento ? 4 : 3 }}" class="r sin-borde">DESCUENTO GENERAL (Bs):</td>
+                    <td class="c">-{{ number_format($cotizacion->descuento_general, 2) }}</td>
+                </tr>
+            @endif
             <tr>
                 <td colspan="{{ $conDescuento ? 4 : 3 }}" class="r b sin-borde" style="font-size: 11px;">TOTAL (Bs):</td>
                 <td class="c b" style="font-size: 11px;">{{ number_format($cotizacion->total, 2) }}</td>

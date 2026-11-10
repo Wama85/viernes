@@ -39,6 +39,8 @@
         $itemsIniciales = [$lineaVacia];
     }
 
+    $descuentoGeneralInicial = old('descuento_general', ($c && (float) $c->descuento_general > 0) ? $num($c->descuento_general) : '');
+
     // Errores del servidor por línea: 'items.0.cantidad' pasa a '0.cantidad'.
     $erroresItems = collect($errors->getMessages())
         ->filter(fn ($m, $k) => str_starts_with($k, 'items.'))
@@ -72,7 +74,7 @@
     Los campos marcados con <span class="text-red-600 font-bold">*</span> son obligatorios.
 </p>
 
-<div x-data="cotizacionForm(@js($listaClientes), @js($listaProductos), @js($itemsIniciales), @js(old('id_cliente', $c->id_cliente ?? '')), @js($erroresItems))"
+<div x-data="cotizacionForm(@js($listaClientes), @js($listaProductos), @js($itemsIniciales), @js(old('id_cliente', $c->id_cliente ?? '')), @js($erroresItems), @js($descuentoGeneralInicial))"
      class="space-y-6">
 
     {{-- Cliente --}}
@@ -161,6 +163,16 @@
                         @endforeach
                     </tbody>
                     <tfoot>
+                        @if ((float) $c->descuento_general > 0)
+                            <tr class="border-t dark:border-gray-700">
+                                <td colspan="4" class="px-3 py-2 text-right">Subtotal (Bs)</td>
+                                <td class="px-3 py-2 text-right">{{ number_format($c->subtotalItems(), 2) }}</td>
+                            </tr>
+                            <tr>
+                                <td colspan="4" class="px-3 py-2 text-right">Descuento general (Bs)</td>
+                                <td class="px-3 py-2 text-right">-{{ number_format($c->descuento_general, 2) }}</td>
+                            </tr>
+                        @endif
                         <tr class="border-t dark:border-gray-700 font-bold">
                             <td colspan="4" class="px-3 py-2 text-right">TOTAL (Bs)</td>
                             <td class="px-3 py-2 text-right">{{ number_format($c->total, 2) }}</td>
@@ -169,6 +181,22 @@
                 </table>
             </div>
         @else
+            {{-- Atajo: copia el mismo descuento en todas las líneas (luego se puede ajustar una por una) --}}
+            <div class="mt-2 flex flex-wrap items-start gap-2 text-sm">
+                <label class="mt-2 text-gray-600 dark:text-gray-400">Mismo descuento para todas las líneas:</label>
+                <div>
+                    <input type="text" inputmode="decimal" maxlength="10" autocomplete="off"
+                           x-model="descGlobal" placeholder="10% · 12.50"
+                           @keydown.enter.prevent="aplicarATodas()"
+                           class="w-32 rounded-md border-gray-300 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300 focus:border-indigo-500 focus:ring-indigo-500 shadow-sm">
+                    <p x-show="descGlobalError" x-text="descGlobalError" class="mt-1 text-xs text-red-600"></p>
+                </div>
+                <button type="button" @click="aplicarATodas()"
+                        class="mt-1 rounded-md border border-indigo-600 px-3 py-1 text-indigo-600 hover:bg-indigo-50">
+                    Aplicar a todas
+                </button>
+            </div>
+
             <div class="space-y-3 mt-2">
                 <template x-for="(it, i) in items" :key="it.uid">
                     <div class="border dark:border-gray-700 rounded-md p-3 space-y-3" data-linea
@@ -227,10 +255,11 @@
 
                             {{-- Descuento --}}
                             <div class="md:col-span-2" data-campo>
-                                <label class="block text-xs text-gray-600 dark:text-gray-400">Descuento (Bs)</label>
+                                <label class="block text-xs text-gray-600 dark:text-gray-400">Descuento (Bs o %)</label>
                                 <input type="text" inputmode="decimal" maxlength="10" autocomplete="off"
+                                       placeholder="0 · 12.50 · 10%"
                                        :name="'items[' + i + '][descuento]'" x-model="it.descuento"
-                                       data-reglas="decimal:9999999.99|descuentoLinea" data-f="descuento"
+                                       data-reglas="descuentoLinea" data-f="descuento"
                                        :data-error-servidor="errores[i + '.descuento'] || ''"
                                        class="{{ $inputClase }}">
                                 <p data-mensaje class="val-msg" hidden></p>
@@ -266,7 +295,24 @@
             <button type="button" @click="agregar()" x-show="items.length < 100"
                     class="mt-3 text-sm text-indigo-600 hover:underline">+ Agregar otra línea</button>
 
-            <p class="mt-4 text-right text-lg font-bold text-gray-800 dark:text-gray-200">
+            {{-- Descuento sobre el total: pasa a la factura, repartido entre los ítems que se facturen --}}
+            <div class="mt-4 flex flex-wrap items-start justify-end gap-3 text-sm" data-campo>
+                <label for="descuento_general" class="mt-2 text-gray-600 dark:text-gray-400">Descuento general (Bs o %):</label>
+                <div>
+                    <input id="descuento_general" type="text" name="descuento_general" inputmode="decimal" maxlength="10" autocomplete="off"
+                           x-model="descGeneral" placeholder="0 · 50 · 10%"
+                           data-reglas="descuentoLinea" data-f="descuentoGeneral"
+                           @if ($errors->first('descuento_general')) data-error-servidor="{{ $errors->first('descuento_general') }}" @endif
+                           class="w-32 rounded-md border-gray-300 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300 focus:border-indigo-500 focus:ring-indigo-500 shadow-sm">
+                    <p data-mensaje class="val-msg" hidden></p>
+                </div>
+            </div>
+            <p x-show="descuentoGeneralBs() > 0" x-cloak class="mt-1 text-right text-sm text-gray-600 dark:text-gray-400">
+                Subtotal: Bs <span x-text="fmt(subtotalItems)"></span>
+                · Descuento general: -Bs <span x-text="fmt(descuentoGeneralBs())"></span>
+            </p>
+
+            <p class="mt-2 text-right text-lg font-bold text-gray-800 dark:text-gray-200">
                 Total: Bs <span x-text="fmt(total)"></span>
             </p>
         @endif
@@ -294,7 +340,23 @@
                     return true;
                 },
 
+                // Descuento de línea: monto en Bs («12.50») o porcentaje («10%»).
                 descuentoLinea: function (v, _a, campo) {
+                    var t = String(v).replace(/\s+/g, '').replace(',', '.');
+                    if (t === '') return true;
+
+                    if (!/^\d+(\.\d{1,2})?%?$/.test(t)) {
+                        return 'Escribe un monto en Bs (por ejemplo 12.50) o un porcentaje (por ejemplo 10%).';
+                    }
+
+                    var esPorcentaje = t.slice(-1) === '%';
+                    var numero = parseFloat(t);
+
+                    if (esPorcentaje) {
+                        return numero <= 100 || 'El porcentaje de descuento no puede superar 100%.';
+                    }
+                    if (numero > 9999999.99) return 'El descuento máximo es 9,999,999.99.';
+
                     var linea = campo.closest('[data-linea]');
                     if (!linea) return true;
 
@@ -304,11 +366,10 @@
                     };
                     var cantidad = leer('[data-f="cantidad"]');
                     var precio = leer('[data-f="precio"]');
-                    var descuento = parseFloat(String(v).replace(',', '.'));
-                    if (isNaN(cantidad) || isNaN(precio) || isNaN(descuento)) return true;
+                    if (isNaN(cantidad) || isNaN(precio)) return true;
 
                     var bruto = Math.round(cantidad * precio * 100) / 100;
-                    return descuento <= bruto
+                    return numero <= bruto
                         || 'El descuento no puede ser mayor al importe de la línea (Bs ' + bruto.toFixed(2) + ').';
                 }
             });
@@ -320,9 +381,12 @@
     })();
 
     document.addEventListener('alpine:init', () => {
-        Alpine.data('cotizacionForm', (clientes, productos, items, idCliente, errores) => ({
+        Alpine.data('cotizacionForm', (clientes, productos, items, idCliente, errores, descuentoGeneral) => ({
             clientes, productos, idCliente, errores,
+            descGeneral: descuentoGeneral || '',
             busqueda: '',
+            descGlobal: '',
+            descGlobalError: '',
             items: items.map((it, n) => ({ ...it, uid: n })),
             siguiente: items.length,
 
@@ -418,12 +482,64 @@
                 if (descuento && window.Validacion) window.Validacion.revisarCampo(descuento, true);
             },
 
+            // Copia el descuento escrito arriba en todas las líneas y las revalida.
+            aplicarATodas() {
+                const t = String(this.descGlobal).replace(/\s+/g, '').replace(',', '.');
+                this.descGlobalError = '';
+
+                if (!/^\d+(\.\d{1,2})?%?$/.test(t)) {
+                    this.descGlobalError = 'Escribe un monto (12.50) o un porcentaje (10%).';
+                    return;
+                }
+                if (t.endsWith('%') && parseFloat(t) > 100) {
+                    this.descGlobalError = 'El porcentaje no puede superar 100%.';
+                    return;
+                }
+
+                this.items.forEach((it) => { it.descuento = t; });
+
+                this.$nextTick(() => {
+                    if (!window.Validacion) return;
+                    this.$el.querySelectorAll('[data-f="descuento"]')
+                        .forEach((el) => window.Validacion.revisarCampo(el, true));
+                });
+            },
+
+            // Descuento de la línea en Bs: monto directo o porcentaje del importe (cantidad × precio).
+            descuentoDe(it) {
+                const t = String(it.descuento ?? '').replace(/\s+/g, '').replace(',', '.');
+                if (t === '') return 0;
+
+                if (t.endsWith('%')) {
+                    const p = parseFloat(t);
+                    const bruto = Math.round(this.num(it.cantidad) * this.num(it.precio_unitario) * 100) / 100;
+                    return isNaN(p) ? 0 : Math.round(bruto * p) / 100;
+                }
+                return this.num(t);
+            },
+
             subtotal(it) {
-                return this.num(it.cantidad) * this.num(it.precio_unitario) - this.num(it.descuento);
+                return this.num(it.cantidad) * this.num(it.precio_unitario) - this.descuentoDe(it);
+            },
+
+            get subtotalItems() {
+                return this.items.reduce((suma, it) => suma + this.subtotal(it), 0);
+            },
+
+            // Descuento general en Bs: monto directo o porcentaje de la suma de ítems.
+            descuentoGeneralBs() {
+                const t = String(this.descGeneral ?? '').replace(/\s+/g, '').replace(',', '.');
+                if (t === '') return 0;
+
+                if (t.endsWith('%')) {
+                    const p = parseFloat(t);
+                    return isNaN(p) ? 0 : Math.round(this.subtotalItems * p) / 100;
+                }
+                return this.num(t);
             },
 
             get total() {
-                return this.items.reduce((suma, it) => suma + this.subtotal(it), 0);
+                return this.subtotalItems - this.descuentoGeneralBs();
             },
 
             fmt(n) {

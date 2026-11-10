@@ -20,6 +20,8 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\RespaldoController;
 use App\Modules\Consultas\Http\Controllers\ConsultaController;
 use App\Modules\Productos\Http\Controllers\ProductoSinFavoritoController;
+use App\Modules\Sin\Http\Controllers\ContingenciaController;
+use App\Modules\Sin\Http\Controllers\SinSincronizacionController;
 
 
 Route::get('/', function () {
@@ -52,6 +54,9 @@ Route::middleware('auth')->group(function () {
 
 
     // Clientes
+    Route::get('clientes/verificar-nit', [ClienteController::class, 'verificarNit'])
+        ->middleware('throttle:60,1')
+        ->name('clientes.verificar-nit');
     Route::resource('clientes', ClienteController::class)->except(['show', 'destroy']);
     Route::patch('clientes/{cliente}/cambiar-estado', [ClienteController::class, 'cambiarEstado'])
         ->name('clientes.cambiarEstado');
@@ -85,6 +90,8 @@ Route::middleware('auth')->group(function () {
     Route::get('facturas/{factura}', [FacturaController::class, 'show'])->name('facturas.show');
     Route::patch('facturas/{factura}/enviar-sin', [FacturaController::class, 'enviarSin'])->name('facturas.enviar-sin');
     Route::get('facturas/{factura}/pdf', [FacturaController::class, 'pdf'])->name('facturas.pdf');
+    Route::get('facturas/{factura}/xml', [FacturaController::class, 'xml'])->name('facturas.xml');
+    Route::post('facturas/{factura}/enviar-correo', [FacturaController::class, 'enviarCorreo'])->name('facturas.enviar-correo');
 
     // Respaldos
     Route::middleware('auth')->group(function () {
@@ -142,6 +149,17 @@ Route::middleware(['auth', 'admin'])->group(function () {
     // Facturas
     Route::patch('facturas/{factura}/aprobar', [FacturaController::class, 'aprobar'])->name('facturas.aprobar');
     Route::patch('facturas/{factura}/anular', [FacturaController::class, 'anular'])->name('facturas.anular');
+    Route::patch('facturas/{factura}/revertir-anulacion', [FacturaController::class, 'revertirAnulacion'])->name('facturas.revertir-anulacion');
+
+    // Sincronización con el SIN
+    Route::get('sin/sincronizacion', [SinSincronizacionController::class, 'index'])->name('sin.sincronizacion');
+    Route::post('sin/sincronizacion', [SinSincronizacionController::class, 'sincronizar'])->name('sin.sincronizacion.ejecutar');
+
+    // Contingencia (facturas fuera de línea)
+    Route::get('sin/contingencia', [ContingenciaController::class, 'index'])->name('sin.contingencia');
+    Route::post('sin/contingencia/cerrar', [ContingenciaController::class, 'cerrar'])->name('sin.contingencia.cerrar');
+    Route::post('sin/contingencia/simular', [ContingenciaController::class, 'simular'])->name('sin.contingencia.simular');
+    Route::post('sin/contingencia/paquetes/{paquete}/validar', [ContingenciaController::class, 'validar'])->name('sin.contingencia.validar');
 
     // Auditoría
     Route::get('auditoria', [AuditoriaController::class, 'index'])->name('auditoria.index');

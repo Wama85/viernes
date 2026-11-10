@@ -24,7 +24,7 @@ class Cotizacion extends Model
     protected $fillable = [
         'anio', 'numero', 'id_cliente', 'id_usuario',
         'fecha_emision', 'fecha_vencimiento', 'estado',
-        'id_aprobador', 'fecha_aprobacion', 'observaciones', 'total',
+        'id_aprobador', 'fecha_aprobacion', 'observaciones', 'total', 'descuento_general',
     ];
 
     protected $casts = [
@@ -117,7 +117,24 @@ class Cotizacion extends Model
     /** Lo que aún no está en ningún recibo ni factura. */
     public function saldo(): float
     {
-        return round((float) $this->total - $this->montoRecibido() - $this->montoFacturado(), 2);
+        if ((float) $this->descuento_general <= 0) {
+            return round((float) $this->total - $this->montoRecibido() - $this->montoFacturado(), 2);
+        }
+
+        // Con descuento general, el saldo es la parte proporcional de los ítems que siguen libres.
+        $todos = (float) $this->detalles()->sum('subtotal');
+
+        if ($todos <= 0) {
+            return 0.0;
+        }
+
+        return round((float) $this->detallesLibres()->sum('subtotal') * (float) $this->total / $todos, 2);
+    }
+
+    /** Suma de los ítems antes del descuento general. */
+    public function subtotalItems(): float
+    {
+        return round((float) $this->detalles->sum('subtotal'), 2);
     }
 
     public function tieneRecibos(): bool

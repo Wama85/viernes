@@ -17,10 +17,12 @@ use SoapFault;
 class SinFacturaEmisionService
 {
     private const TIPO_EMISION_EN_LINEA = 1;
+    private const TIPO_EMISION_FUERA_DE_LINEA = 2;
     private const TIPO_FACTURA_CREDITO_FISCAL = 1;
     private const DOCUMENTO_SECTOR_COMPRA_VENTA = 1;
     private const MONEDA_BOLIVIANO = 1;
     private const TIPO_DOC_CI = 1;
+    private const TIPO_DOC_NIT = 5;
     private const ESTADO_VALIDADA = 908;
     private const ESTADO_RECHAZADA = 902;
     private const ERROR_INTERNO_SIN = 2;
@@ -29,10 +31,21 @@ class SinFacturaEmisionService
     private const TOLERANCIA_IVA = 0;
 
     /** Forma de pago del sistema => código de ParametricaTipoMetodoPago del SIN. */
-    private const METODOS_PAGO = ['EFECTIVO' => 1, 'CHEQUE' => 3, 'TRANSFERENCIA' => 7, 'QR' => 7];
+    private const METODOS_PAGO = [
+        'EFECTIVO'         => 1,
+        'TARJETA'          => 2,
+        'CHEQUE'           => 3, // solo facturas antiguas
+        'TRANSFERENCIA'    => 7,
+        'QR'               => 7,
+        'EFECTIVO_TARJETA' => 10,
+    ];
 
-    public function __construct(private SinCliente $sin, private SinFacturaXml $xml)
-    {
+    public function __construct(
+        private SinCliente $sin,
+        private SinFacturaXml $xml,
+        private SinNitService $nit,
+        private SinComunicacion $comunicacion
+    ) {
     }
 
     /**
@@ -61,6 +74,10 @@ class SinFacturaEmisionService
             throw new RuntimeException('Solo se envían al SIN las facturas aprobadas.');
         }
 
+        if ($factura->estado_sin === Factura::SIN_FUERA_DE_LINEA) {
+            throw new RuntimeException('Esta factura se emitió fuera de línea: se envía al SIN en un paquete cuando se recupera la conexión.');
+        }
+
         if (! in_array($factura->estado_sin, [Factura::SIN_NO_ENVIADA, Factura::SIN_RECHAZADA], true)) {
             throw new RuntimeException('Esta factura ya fue validada por el SIN.');
         }
@@ -87,10 +104,52 @@ class SinFacturaEmisionService
         $codigoMetodoPago = self::METODOS_PAGO[$factura->forma_pago]
             ?? throw new RuntimeException("La forma de pago «{$factura->forma_pago}» no tiene código del SIN.");
 
+        // Con tarjeta el SIN recibe 16 dígitos: 4 primeros + 8 ceros + 4 últimos.
+        $numeroTarjeta = $factura->llevaTarjeta() ? $factura->numero_tarjeta : null;
+
+        if ($factura->llevaTarjeta() && ! preg_match('/^\d{16}$/', (string) $numeroTarjeta)) {
+            throw new RuntimeException('La factura es con tarjeta pero no tiene el número de tarjeta (primeros y últimos 4 dígitos).');
+        }
+
         $codigoDocumento = (int) TipoDocumento::whereKey($factura->cliente_id_tipo_documento)->value('codigo_sin');
         if (! $codigoDocumento) {
             throw new RuntimeException('El cliente no tiene un tipo de documento válido para el SIN.');
         }
+
+        // ¿Hay comunicación con el SIN? Si no, la factura se emite fuera de línea (evento significativo).
+        $fueraDeLinea = ! $this->comunicacion->disponible();
+
+        // NIT del cliente: se consulta al SIN antes de enviar. Si no lo reconoce, solo se emite con excepción de NIT.
+        $excepcion = false;
+
+        if ($fueraDeLinea) {
+            // Sin conexión no se puede verificar el NIT: las facturas con NIT llevan código de excepción.
+            $excepcion = $codigoDocumento === self::TIPO_DOC_NIT;
+        } elseif ($codigoDocumento === self::TIPO_DOC_NIT) {
+            $pedida = $conExcepcion || (bool) $factura->codigo_excepcion;
+            $verificacion = $this->nit->verificar((string) $factura->cliente_documento);
+
+            if ($verificacion['estado'] === SinNitService::INVALIDO) {
+                if (! $pedida) {
+                    $factura->update(['mensaje_sin' => 'NIT_NO_VALIDO: ' . $verificacion['mensaje'] . '. El SIN no reconoce el NIT ' . $factura->cliente_documento . '.']);
+
+                    throw new RuntimeException(
+                        "El SIN no reconoce el NIT {$factura->cliente_documento} ({$verificacion['mensaje']}). "
+                        . 'Si el cliente confirma que es su NIT, usa «Emitir con excepción de NIT» en la factura.'
+                    );
+                }
+
+                $excepcion = true;
+            } elseif ($verificacion['estado'] === SinNitService::DESCONOCIDO) {
+                // No se pudo consultar: se respeta lo que pidió el usuario y el SIN decide.
+                $excepcion = $pedida;
+            }
+        }
+
+        // Algunos códigos especiales (99002, 99003) exigen un nombre fijo; el PDF y el XML deben llevar el mismo.
+        $razonCliente = ($codigoDocumento === self::TIPO_DOC_NIT
+            ? SinNitService::razonSocialEspecial((string) $factura->cliente_documento)
+            : null) ?? (string) $factura->cliente_razon_social;
 
         $detalles = $this->detalles($factura);
 
@@ -98,7 +157,8 @@ class SinFacturaEmisionService
         // Cada ítem se calcula como lo valida el SIN y el IVA es exactamente el 13 % del neto.
         // Los centavos de redondeo se absorben con el descuento adicional, para que el total
         // facturado sea el de la cotización.
-        $totalConIva = round(array_sum(array_column($detalles, 'subTotal')), 2);
+        // El descuento adicional global (con IVA incluido) rebaja el total que debe quedar facturado.
+        $totalConIva = round(array_sum(array_column($detalles, 'subTotal')) - (float) $factura->descuento_adicional, 2);
         $detalles = $this->aNeto($detalles, $totalConIva);
         $neto = round(array_sum(array_column($detalles, 'subTotal')), 2);
 
@@ -116,7 +176,7 @@ class SinFacturaEmisionService
             $fecha,
             $sucursal,
             (int) config('sin.modalidad'),
-            self::TIPO_EMISION_EN_LINEA,
+            $fueraDeLinea ? self::TIPO_EMISION_FUERA_DE_LINEA : self::TIPO_EMISION_EN_LINEA,
             self::TIPO_FACTURA_CREDITO_FISCAL,
             self::DOCUMENTO_SECTOR_COMPRA_VENTA,
             (int) $factura->numero,
@@ -138,7 +198,7 @@ class SinFacturaEmisionService
             'direccion'                    => $cufd->direccion ?: 'S/N',
             'codigoPuntoVenta'             => $puntoVenta,
             'fechaEmision'                 => $fecha->format('Y-m-d\TH:i:s.v'),
-            'nombreRazonSocial'            => mb_substr((string) $factura->cliente_razon_social, 0, 500),
+            'nombreRazonSocial'            => mb_substr($razonCliente, 0, 500),
             'codigoTipoDocumentoIdentidad' => $codigoDocumento,
             'numeroDocumento'              => (string) $factura->cliente_documento,
             'complemento'                  => ($codigoDocumento === self::TIPO_DOC_CI && $factura->cliente_complemento)
@@ -146,7 +206,7 @@ class SinFacturaEmisionService
                 : null,
             'codigoCliente'                => (string) $factura->cliente_documento,
             'codigoMetodoPago'             => $codigoMetodoPago,
-            'numeroTarjeta'                => null,
+            'numeroTarjeta'                => $numeroTarjeta,
             'montoTotal'                   => $montoTotal,
             'montoTotalSujetoIva'          => $montoTotal,
             'codigoMoneda'                 => self::MONEDA_BOLIVIANO,
@@ -155,7 +215,7 @@ class SinFacturaEmisionService
             'ivaFijo'                      => $iva,
             'montoGiftCard'                => null,
             'descuentoAdicional'           => $descuentoAdicional > 0 ? $descuentoAdicional : null,
-            'codigoExcepcion'              => $conExcepcion ? 1 : null,
+            'codigoExcepcion'              => $excepcion ? 1 : null,
             'cafc'                         => null,
             'leyenda'                      => $leyenda,
             'usuario'                      => mb_substr((string) ($factura->emisor?->nombre ?? 'SISTEMA'), 0, 100),
@@ -163,7 +223,6 @@ class SinFacturaEmisionService
         ];
 
         $contenido = $this->xml->construir($cabecera, $detalles);
-        
         $errores = $this->xml->validar($contenido);
 
         if ($errores) {
@@ -182,7 +241,22 @@ class SinFacturaEmisionService
             'codigo_estado'      => null,
             'codigo_recepcion'   => null,
             'mensaje_sin'        => null,
+            'codigo_excepcion'   => $excepcion,
+            'codigo_emision'     => $fueraDeLinea ? Factura::EMISION_FUERA_DE_LINEA : Factura::EMISION_EN_LINEA,
+            'cliente_razon_social' => $razonCliente,
+            'xml'                => $contenido,
         ]);
+
+        if ($fueraDeLinea) {
+            // No se envía: queda guardada con su XML y espera el paquete que se manda al recuperar la conexión.
+            $factura->update([
+                'estado_sin'      => Factura::SIN_FUERA_DE_LINEA,
+                'mensaje_sin'     => 'Emitida FUERA DE LÍNEA: no hay comunicación con el SIN. Se enviará en un paquete cuando se recupere la conexión.',
+                'fecha_envio_sin' => null,
+            ]);
+
+            return $factura->fresh();
+        }
 
         try {
             [$transaccion, $codigoEstado, $codigoRecepcion, $mensajes] = $this->enviar($contenido, (string) $cufd->cufd, (string) $cuis->cuis);
@@ -335,13 +409,8 @@ class SinFacturaEmisionService
     }
 
     /**
-     * Descuento adicional (0 a 10 centavos) que deja el total de la factura lo más cerca posible del
-     * total de la cotización, con el IVA siempre igual al 13 % del neto. Si dos totales quedan igual de
-     * cerca, prefiere el que no cobra de más.
-     */
-    /**
      * Calcula [descuento adicional, IVA, total] para que el total facturado sea el de la cotización.
-     * 1) Busca un descuento adicional (0 a 10 centavos) con el que neto + 13 % exacto dé el total.
+     * 1) Busca un descuento adicional (el global más 0 a 10 centavos de redondeo) con el que neto + 13 % exacto dé el total.
      * 2) Si no existe (p. ej. 100,00), usa un IVA que difiere hasta TOLERANCIA_IVA del 13 % exacto.
      * 3) Si tampoco, deja el total más cercano sin cobrar de más.
      *
@@ -351,8 +420,13 @@ class SinFacturaEmisionService
     {
         $mejor = null;
 
+        // Descuento neto que, en teoría, deja justo el total pedido (incluye el descuento adicional global).
+        // Se prueban 11 valores a su alrededor; sin descuento global es el rango 0 a 0,10 de siempre.
+        $centro = max(0.0, round($neto - $totalConIva / 1.13, 2));
+        $inicio = max(0.0, round($centro - 0.05, 2));
+
         for ($centavos = 0; $centavos <= 10; $centavos++) {
-            $descuento = $centavos / 100;
+            $descuento = round($inicio + $centavos / 100, 2);
             $totalNeto = round($neto - $descuento, 2);
             $iva = round($totalNeto * 0.13, 2);
             $total = round($totalNeto + $iva, 2);
@@ -364,7 +438,7 @@ class SinFacturaEmisionService
 
         if (self::TOLERANCIA_IVA > 0) {
             for ($centavos = 0; $centavos <= 10; $centavos++) {
-                $descuento = $centavos / 100;
+                $descuento = round($inicio + $centavos / 100, 2);
                 $totalNeto = round($neto - $descuento, 2);
                 $ivaExacto = round($totalNeto * 0.13, 2);
                 $iva = round($totalConIva - $totalNeto, 2);
@@ -376,7 +450,7 @@ class SinFacturaEmisionService
         }
 
         for ($centavos = 0; $centavos <= 10; $centavos++) {
-            $descuento = $centavos / 100;
+            $descuento = round($inicio + $centavos / 100, 2);
             $totalNeto = round($neto - $descuento, 2);
             $iva = round($totalNeto * 0.13, 2);
             $total = round($totalNeto + $iva, 2);

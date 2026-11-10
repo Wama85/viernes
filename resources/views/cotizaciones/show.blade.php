@@ -39,6 +39,18 @@
                 <div class="p-3 rounded bg-red-100 text-red-800">{{ session('error') }}</div>
             @endif
 
+            @if (isset($nitEstado) && $nitEstado && $nitEstado['estado'] === 'INVALIDO')
+                <div class="p-3 rounded bg-amber-100 text-amber-900 text-sm">
+                    <p class="font-semibold">El SIN no reconoce el NIT {{ $cliente->documento_identidad }} ({{ $nitEstado['mensaje'] }}).</p>
+                    <p>
+                        Revisa el documento del cliente en
+                        @if (\Illuminate\Support\Facades\Route::has('clientes.edit'))<a href="{{ route('clientes.edit', $cliente) }}" class="underline">Clientes</a>@else Clientes @endif:
+                        si en realidad es un carnet, cambia el tipo de documento. Si el NIT es correcto,
+                        la factura se emitirá con excepción de NIT (se confirma al emitirla).
+                    </p>
+                </div>
+            @endif
+
             <div class="bg-white dark:bg-gray-800 shadow sm:rounded-lg p-6 space-y-6 text-sm text-gray-700 dark:text-gray-300">
 
                 {{-- Cliente --}}
@@ -119,6 +131,18 @@
                             @endforeach
                         </tbody>
                         <tfoot>
+                            @if ((float) $cotizacion->descuento_general > 0)
+                                <tr class="border-t dark:border-gray-700">
+                                    <td colspan="5" class="px-3 py-2 text-right">Subtotal (Bs)</td>
+                                    <td class="px-3 py-2 text-right">{{ number_format($cotizacion->subtotalItems(), 2) }}</td>
+                                    <td></td>
+                                </tr>
+                                <tr>
+                                    <td colspan="5" class="px-3 py-2 text-right">Descuento general (Bs)</td>
+                                    <td class="px-3 py-2 text-right">-{{ number_format($cotizacion->descuento_general, 2) }}</td>
+                                    <td></td>
+                                </tr>
+                            @endif
                             <tr class="border-t dark:border-gray-700 font-bold">
                                 <td colspan="5" class="px-3 py-2 text-right">TOTAL (Bs)</td>
                                 <td class="px-3 py-2 text-right">{{ number_format($cotizacion->total, 2) }}</td>
