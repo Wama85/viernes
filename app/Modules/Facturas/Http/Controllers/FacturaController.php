@@ -216,7 +216,15 @@ class FacturaController extends Controller
         return view('facturas.show', compact('factura'));
     }
 
-        /** PDF de la factura: se ve en el navegador o se descarga con ?descargar=1. */
+        /** Nombre del archivo descargado: fac-{NIT/CI del cliente}-{número de factura}.{extensión}. */
+    private function nombreArchivo(Factura $factura, string $extension): string
+    {
+        $nit = preg_replace('/[^A-Za-z0-9]+/', '', (string) $factura->cliente_documento) ?: 'sn';
+
+        return 'fac-' . $nit . '-' . $factura->numero . '.' . $extension;
+    }
+
+    /** PDF de la factura: se ve en el navegador o se descarga con ?descargar=1. */
     public function pdf(Request $request, Factura $factura, FacturaPdfService $servicio)
     {
         $this->verificarPropiedad($factura->cotizacion);
@@ -224,7 +232,7 @@ class FacturaController extends Controller
         abort_unless($factura->numero, 404, 'La factura aún no fue aprobada.');
 
         $pdf = $servicio->generar($factura);
-        $nombre = 'factura-' . $factura->numero . '.pdf';
+        $nombre = $this->nombreArchivo($factura, 'pdf');
 
         return $request->boolean('descargar') ? $pdf->download($nombre) : $pdf->stream($nombre);
     }
@@ -238,7 +246,7 @@ class FacturaController extends Controller
 
         return response($factura->xml, 200, [
             'Content-Type'        => 'application/xml; charset=UTF-8',
-            'Content-Disposition' => 'attachment; filename="factura-' . $factura->numero . '.xml"',
+            'Content-Disposition' => 'attachment; filename="' . $this->nombreArchivo($factura, 'xml') . '"',
         ]);
     }
 
