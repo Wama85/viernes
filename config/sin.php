@@ -10,6 +10,10 @@ return [
     'token'          => env('SIN_TOKEN'),
     'url_base'       => rtrim(env('SIN_URL_BASE', 'https://pilotosiatservicios.impuestos.gob.bo/sfd'), '/'),
 
+    // Formato del XML de la factura: 'v2' (precios con IVA incluido) o 'v3' (precios netos, IVA aparte).
+    // Vacío: se deduce de la URL (…/v2 => v2; …/sfd => v3).
+    'formato'        => env('SIN_FORMATO'),
+
     // Datos del emisor que van dentro de la factura
     'razon_social'   => env('SIN_RAZON_SOCIAL'),
     'municipio'      => env('SIN_MUNICIPIO', 'COCHABAMBA'),

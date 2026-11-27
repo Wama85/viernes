@@ -84,8 +84,13 @@
                                 <span x-text="tipo === 'ENTRADA' ? 'Cantidad que ingresa' : 'Stock real contado'"></span>
                                 <span class="text-red-600">*</span>
                             </label>
-                            <input type="number" name="cantidad" step="0.01" min="0" required
+                            <input type="number" name="cantidad" min="0" required
+                                   step="{{ $admiteDecimales ? '0.01' : '1' }}"
+                                   inputmode="{{ $admiteDecimales ? 'decimal' : 'numeric' }}"
                                    value="{{ old('cantidad') }}" class="{{ $campo }}">
+                            @unless ($admiteDecimales)
+                                <p class="mt-1 text-xs text-gray-500">Esta unidad se cuenta en enteros.</p>
+                            @endunless
                         </div>
 
                         <div class="md:col-span-2">

@@ -2,6 +2,9 @@
     $precios = (object) $items->pluck('subtotal', 'id_cotizacion_detalle')->map(fn ($v) => (float) $v)->all();
     $seleccionados = array_map('strval', old('items', []));
     $formaActual = old('forma_pago', 'EFECTIVO');
+    // Descuento general de la cotización: la factura hereda la parte proporcional a los ítems elegidos.
+    $descGeneral = round((float) ($cotizacion->descuento_general ?? 0), 2);
+    $subtotalTodos = $descGeneral > 0 ? round((float) $cotizacion->detalles()->sum('subtotal'), 2) : 0;
     $campo = 'w-full rounded-md border-gray-300 dark:bg-gray-900 dark:border-gray-700 dark:text-gray-200';
 @endphp
 
@@ -10,7 +13,8 @@
           precios: @js($precios),
           sel: @js($seleccionados),
           forma: @js($formaActual),
-          descRaw: @js((string) old('descuento_adicional', '')),
+          descGeneral: @js($descGeneral),
+          subtotalTodos: @js($subtotalTodos),
           get total() { return this.sel.reduce((s, id) => s + Number(this.precios[id] ?? 0), 0); },
           get conTarjeta() { return ['TARJETA', 'EFECTIVO_TARJETA'].includes(this.forma); },
           r(x) { return Math.round((x + Number.EPSILON) * 100) / 100; },
@@ -23,31 +27,19 @@
               return false;
           },
           get descuentoPedido() {
-              let t = String(this.descRaw).trim().replace(',', '.');
-              if (t === '') { return 0; }
-              if (t.endsWith('%')) {
-                  let p = parseFloat(t.slice(0, -1));
-                  return (isNaN(p) || p < 0) ? NaN : Math.round(this.total * p) / 100;
-              }
-              let v = parseFloat(t);
-              return (isNaN(v) || v < 0) ? NaN : Math.round(v * 100) / 100;
+              if (this.descGeneral <= 0 || this.subtotalTodos <= 0 || this.total <= 0) { return 0; }
+              return this.r(this.descGeneral * this.total / this.subtotalTodos);
           },
           get descuento() {
               let d = this.descuentoPedido;
-              if (Number.isNaN(d) || d <= 0 || this.alcanzable(this.r(this.total - d))) { return d; }
+              if (d <= 0 || this.alcanzable(this.r(this.total - d))) { return d; }
               for (let delta of [0.01, -0.01, 0.02, -0.02, 0.03, -0.03, 0.04, -0.04, 0.05, -0.05]) {
                   let c = this.r(d + delta);
                   if (c > 0 && c < this.total && this.alcanzable(this.r(this.total - c))) { return c; }
               }
               return d;
           },
-          get ajustado() { return !Number.isNaN(this.descuentoPedido) && this.descuento !== this.descuentoPedido; },
-          get descError() {
-              if (Number.isNaN(this.descuentoPedido)) { return 'Escribe un monto (5 u 8.99) o un porcentaje (10%).'; }
-              if (this.descuentoPedido > 0 && this.descuentoPedido >= this.total) { return 'El descuento no puede ser igual ni mayor al total (no se permite descontar el 100 %).'; }
-              return '';
-          },
-          get final() { return this.total - (Number.isNaN(this.descuento) ? 0 : this.descuento); }
+          get final() { return this.total - this.descuento; }
       }">
     @csrf
 
@@ -97,9 +89,9 @@
         </div>
 
         <div class="mt-3 text-right text-sm text-gray-700 dark:text-gray-300 space-y-1">
-            <p x-show="descuento > 0 && !descError" style="display: none;">
+            <p x-show="descuento > 0" style="display: none;">
                 Subtotal Bs <span x-text="total.toFixed(2)"></span>
-                · Descuento adicional Bs <span x-text="descuento.toFixed(2)"></span>
+                · Descuento general de la cotización Bs <span x-text="descuento.toFixed(2)"></span>
             </p>
             <p>
                 Total de la factura: <span class="text-lg font-bold">Bs <span x-text="final.toFixed(2)"></span></span>
@@ -135,20 +127,9 @@
         @error('tarjeta_fin') <p class="text-sm text-red-600 mt-1">{{ $message }}</p> @enderror
     </div>
 
-    <div class="max-w-xs">
-        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Descuento adicional (opcional)</label>
-        <input type="text" name="descuento_adicional" x-model="descRaw" maxlength="12" autocomplete="off"
-               placeholder="Ej. 5, 8.99 o 10%" class="{{ $campo }}">
-        <p x-show="descError" x-text="descError" class="text-sm text-red-600 mt-1" style="display: none;"></p>
-        <p x-show="ajustado && !descError" class="text-xs text-amber-700 mt-1" style="display: none;">
-            Se ajusta a Bs <span x-text="descuento.toFixed(2)"></span> para que el total se pueda facturar al centavo en el SIN.
-        </p>
-        @error('descuento_adicional') <p class="text-sm text-red-600 mt-1">{{ $message }}</p> @enderror
-    </div>
-
     <div class="flex items-center gap-3">
         <button type="submit" class="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700"
-                :disabled="sel.length === 0 || descError !== ''" :class="(sel.length === 0 || descError !== '') ? 'opacity-50 cursor-not-allowed' : ''">
+                :disabled="sel.length === 0" :class="sel.length === 0 ? 'opacity-50 cursor-not-allowed' : ''">
             {{ $boton }}
         </button>
         <a href="{{ $cancelar }}" class="text-sm text-gray-600 dark:text-gray-400 hover:underline">Cancelar</a>

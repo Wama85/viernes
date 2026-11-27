@@ -33,7 +33,7 @@
                             </li>
                         @endif
                     </ul>
-                    <p class="mt-1 text-xs">Como la cotización ya tiene descuento, no se puede dar otro en la factura: deja vacío «Descuento adicional».</p>
+                    <p class="mt-1 text-xs">El descuento se define solo en la cotización; la factura lo refleja tal cual.</p>
                 </div>
             @endif
 
@@ -43,6 +43,7 @@
                     'boton'    => 'Emitir factura',
                     'cancelar' => route('cotizaciones.show', $cotizacion),
                     'nitEstado' => $nitEstado ?? null,
+                    'cotizacion' => $cotizacion,
                 ])
             </div>
         </div>

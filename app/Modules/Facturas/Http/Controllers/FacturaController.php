@@ -105,11 +105,12 @@ class FacturaController extends Controller
 
             $items = $this->resolverItems($bloqueada, $request->input('items'));
 
-            // Un ítem con total 0 (precio 0 o descuento del 100 %) no es facturable.
+            // Un ítem con total 0 (precio 0 o descuento del 100 %) no es facturable: el XSD del SIN exige subtotal mayor a 0.
             foreach ($items as $item) {
                 if ((float) $item->subtotal <= 0) {
                     throw ValidationException::withMessages([
-                        'items' => 'El ítem «' . $item->descripcion . '» tiene un total de Bs 0 (por ejemplo, un descuento del 100 %). No se puede facturar.',
+                        'items' => 'El ítem «' . $item->descripcion . '» tiene un total de Bs 0 (por ejemplo, un descuento del 100 %). '
+                            . 'El SIN no admite ítems con subtotal 0: baja el descuento a menos del 100 % o quita el ítem de la factura.',
                     ]);
                 }
             }
@@ -119,28 +120,16 @@ class FacturaController extends Controller
             $descuentoItems = round((float) $items->sum('descuento'), 2);
             $heredable = $this->descuentoHeredado($bloqueada, $totalItems);
 
-            // Si la cotización ya trae descuento (en los ítems o general), no se descuenta una segunda vez al facturar.
-            $heredado = ! $request->filled('descuento_adicional');
-
-            if (! $heredado && ($descuentoItems > 0 || $heredable > 0)) {
-                throw ValidationException::withMessages([
-                    'descuento_adicional' => 'Esta cotización ya tiene descuento, por eso no se puede dar otro al facturar. '
-                        . 'Si el cliente merece más descuento, modifica la cotización antes de facturar.',
-                ]);
-            }
-
-            // Sin descuento escrito, la factura hereda la parte que le toca del descuento general de la cotización.
-            $pedido = $heredado
-                ? $heredable
-                : $this->descuentoAdicional($request->input('descuento_adicional'), $totalItems);
+            // El descuento se define solo en la cotización: la factura hereda la parte que le toca del descuento general.
+            $pedido = $heredable;
             $descuento = $this->descuentoFacturable($pedido, $totalItems);
 
             if ($descuento !== $pedido) {
-                $notaDescuento = ' El descuento adicional se ajustó de Bs ' . number_format($pedido, 2)
+                $notaDescuento = ' El descuento general se ajustó de Bs ' . number_format($pedido, 2)
                     . ' a Bs ' . number_format($descuento, 2) . ' para que el total sea facturable al centavo en el SIN.';
             }
 
-            if ($heredado && $descuento > 0) {
+            if ($descuento > 0) {
                 $notaDescuento = ' Se aplicó el descuento general de la cotización (Bs ' . number_format($descuento, 2) . ').' . $notaDescuento;
             }
 
@@ -148,7 +137,7 @@ class FacturaController extends Controller
             if ($descuentoItems > 0 || $descuento > 0) {
                 $notaDescuento .= ' DESCUENTO APLICADO: Bs ' . number_format($descuentoItems + $descuento, 2)
                     . ($descuentoItems > 0 && $descuento > 0
-                        ? ' (ítems Bs ' . number_format($descuentoItems, 2) . ' + adicional Bs ' . number_format($descuento, 2) . ')'
+                        ? ' (ítems Bs ' . number_format($descuentoItems, 2) . ' + general Bs ' . number_format($descuento, 2) . ')'
                         : '')
                     . '. Recuérdaselo al cliente.';
             }
@@ -157,7 +146,7 @@ class FacturaController extends Controller
 
             if ($totalFinal < 0.10) {
                 throw ValidationException::withMessages([
-                    'descuento_adicional' => 'El descuento adicional deja la factura prácticamente en cero. No se permite descontar el 100 %.',
+                    'items' => 'El descuento deja la factura prácticamente en cero. No se permite descontar el 100 %.',
                 ]);
             }
 
@@ -166,7 +155,7 @@ class FacturaController extends Controller
                 throw ValidationException::withMessages([
                     'items' => 'El total de la factura (Bs ' . number_format($totalFinal, 2)
                         . ') no se puede facturar exacto con el SIN: quedaría con 1 centavo de diferencia. '
-                        . 'Cambia la combinación de ítems o el descuento adicional (por ejemplo, agrega o quita un ítem).',
+                        . 'Cambia la combinación de ítems o el descuento de la cotización (por ejemplo, agrega o quita un ítem).',
                 ]);
             }
 
@@ -210,7 +199,7 @@ class FacturaController extends Controller
         if ($factura->estado === Factura::APROBADA) {
             // Ya confirmada la factura, se envía al SIN (fuera de la transacción).
             [$exito, $envio] = $this->enviarAlSin($factura);
-            $mensaje = 'Factura registrada y aprobada. ' . $envio;
+            $mensaje = 'Factura registrada y aprobada. ' . $envio . $this->correoAutomatico($factura);
         }
 
         return redirect()->route('facturas.show', $factura)
@@ -258,48 +247,19 @@ class FacturaController extends Controller
     {
         $this->verificarPropiedad($factura->cotizacion);
 
-        if ($factura->estado !== Factura::APROBADA || $factura->estado_sin !== Factura::SIN_VALIDADA) {
-            return back()->with('error', 'Solo se envía por correo una factura aprobada y validada por el SIN.');
+        // También se envía la factura emitida fuera de línea: el cliente la recibe aunque el SIN aún no la haya validado.
+        if ($factura->estado !== Factura::APROBADA
+            || ! in_array($factura->estado_sin, [Factura::SIN_VALIDADA, Factura::SIN_FUERA_DE_LINEA], true)) {
+            return back()->with('error', 'Solo se envía por correo una factura aprobada y validada por el SIN, o emitida fuera de línea.');
         }
 
         if (blank($factura->xml)) {
             return back()->with('error', 'Esta factura no tiene el XML guardado (se emitió antes de esta función), por eso no se puede enviar por correo.');
         }
 
-        $factura->load('cotizacion.cliente.correos');
+        [$enviado, $texto] = $this->despacharCorreo($factura, $servicio);
 
-        $correos = $factura->cotizacion->cliente->correos
-            ->pluck('correo')
-            ->push($factura->cliente_correo)
-            ->filter(fn ($c) => filter_var($c, FILTER_VALIDATE_EMAIL))
-            ->map(fn ($c) => mb_strtolower(trim($c)))
-            ->unique()
-            ->values()
-            ->all();
-
-        if (empty($correos)) {
-            return back()->with('error', 'El cliente no tiene un correo válido registrado.');
-        }
-
-        try {
-            $pdf = $servicio->generar($factura)->output();
-            Mail::to($correos)->send(new FacturaEnviada($factura, $pdf, (string) $factura->xml));
-        } catch (Throwable $e) {
-            report($e);
-
-            return back()->with(
-                'error',
-                'No se pudo enviar el correo. Revisa la configuración de correo e inténtalo de nuevo.'
-                . (config('app.debug') ? ' (' . $e->getMessage() . ')' : '')
-            );
-        }
-
-        $factura->forceFill([
-            'fecha_correo'     => now(),
-            'correo_enviado_a' => mb_substr(implode(', ', $correos), 0, 500),
-        ])->saveQuietly();
-
-        return back()->with('success', 'Factura enviada con PDF y XML a: ' . implode(', ', $correos) . '.');
+        return back()->with($enviado ? 'success' : 'error', $texto);
     }
 
     /** Al aprobar se asigna el número consecutivo, se descuenta el stock y se envía al SIN. */
@@ -333,7 +293,7 @@ class FacturaController extends Controller
 
         return back()->with(
             $exito ? 'success' : 'error',
-            'Factura aprobada. ' . $envio . $this->stock->mensajeFaltantes($faltantes)
+            'Factura aprobada. ' . $envio . $this->correoAutomatico($factura) . $this->stock->mensajeFaltantes($faltantes)
         )->with('mostrar_pdf', $this->mostrarPdf($factura));
     }
 
@@ -483,6 +443,66 @@ class FacturaController extends Controller
 
     // ------------------------------------------------------------------
 
+    /** Envía al cliente el PDF y el XML. @return array{0: bool, 1: string} [éxito, texto para el usuario] */
+    private function despacharCorreo(Factura $factura, FacturaPdfService $servicio): array
+    {
+        $factura->load('cotizacion.cliente.correos');
+
+        $correos = $factura->cotizacion->cliente->correos
+            ->pluck('correo')
+            ->push($factura->cliente_correo)
+            ->filter(fn ($c) => filter_var($c, FILTER_VALIDATE_EMAIL))
+            ->map(fn ($c) => mb_strtolower(trim($c)))
+            ->unique()
+            ->values()
+            ->all();
+
+        if (empty($correos)) {
+            return [false, 'El cliente no tiene un correo válido registrado.'];
+        }
+
+        try {
+            $pdf = $servicio->generar($factura)->output();
+            Mail::to($correos)->send(new FacturaEnviada($factura, $pdf, (string) $factura->xml));
+        } catch (Throwable $e) {
+            report($e);
+
+            return [false, 'No se pudo enviar el correo. Revisa la configuración de correo e inténtalo de nuevo.'
+                . (config('app.debug') ? ' (' . $e->getMessage() . ')' : '')];
+        }
+
+        $factura->forceFill([
+            'fecha_correo'     => now(),
+            'correo_enviado_a' => mb_substr(implode(', ', $correos), 0, 500),
+        ])->saveQuietly();
+
+        return [true, 'Factura enviada con PDF y XML a: ' . implode(', ', $correos) . '.'];
+    }
+
+    /**
+     * Al emitir, la factura validada (o emitida fuera de línea) llega sola al correo del cliente.
+     * Nunca hace fallar la emisión: si no se puede, avisa y se reenvía con el botón. Se desactiva
+     * con 'correo_automatico' => false en config/facturacion.php.
+     */
+    private function correoAutomatico(Factura $factura): string
+    {
+        if (! config('facturacion.correo_automatico', true)) {
+            return '';
+        }
+
+        $factura->refresh();
+
+        if ($factura->estado !== Factura::APROBADA
+            || ! in_array($factura->estado_sin, [Factura::SIN_VALIDADA, Factura::SIN_FUERA_DE_LINEA], true)
+            || blank($factura->xml)) {
+            return '';
+        }
+
+        [$enviado, $texto] = $this->despacharCorreo($factura, app(FacturaPdfService::class));
+
+        return ' ' . ($enviado ? $texto : 'No se pudo enviar el correo automáticamente: ' . $texto . ' Puedes reenviarlo desde la factura.');
+    }
+
     /** ¿Ya hay autorización para enviar facturas al SIN? (SIN_ENVIAR_FACTURAS en el .env) */
     private function envioActivo(): bool
     {
@@ -602,33 +622,6 @@ class FacturaController extends Controller
         $todos = (float) $cotizacion->detalles()->sum('subtotal');
 
         return $todos > 0 ? round($general * $totalItemsFacturados / $todos, 2) : 0.0;
-    }
-
-    /** Descuento global en Bs: acepta un monto («5», «8.99») o un porcentaje («10%») del total. */
-    private function descuentoAdicional(?string $texto, float $total): float
-    {
-        $texto = trim((string) $texto);
-
-        if ($texto === '') {
-            return 0.0;
-        }
-
-        $esPorcentaje = str_ends_with($texto, '%');
-        $numero = (float) str_replace(',', '.', trim(rtrim($texto, '% ')));
-
-        if ($esPorcentaje) {
-            if ($numero >= 100) {
-                throw ValidationException::withMessages(['descuento_adicional' => 'No se puede descontar el 100 % de la factura.']);
-            }
-
-            return round($total * $numero / 100, 2);
-        }
-
-        if ($numero >= $total) {
-            throw ValidationException::withMessages(['descuento_adicional' => 'El descuento adicional debe ser menor que el total de la factura.']);
-        }
-
-        return round($numero, 2);
     }
 
     /**

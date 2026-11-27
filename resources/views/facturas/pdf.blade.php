@@ -50,6 +50,10 @@
         <div class="marca">SIN VALOR<br>LEGAL</div>
     @endif
 
+    @if ($anulada)
+        <div style="position: fixed; top: 38%; left: 0; width: 100%; text-align: center; font-size: 90px; font-weight: bold; color: #f2b8b8; z-index: -1; transform: rotate(-30deg);">ANULADO</div>
+    @endif
+
     {{-- Encabezado: emisor | factura | datos de autorización --}}
     <table class="cab">
         <tr>
@@ -70,6 +74,9 @@
             <td style="width: 26%;">
                 <div class="titulo">FACTURA</div>
                 <div class="subtitulo">CON DERECHO A CRÉDITO FISCAL</div>
+                @if ($fueraDeLinea)
+                    <div class="subtitulo" style="color: #ce0505; margin-top: 4px;">EMITIDA FUERA DE LÍNEA</div>
+                @endif
             </td>
               <td style="width: 38%; text-align: right;" class="caja">
                 <span class="b">NIT:</span> {{ $emisor['nit'] }}<br>
@@ -92,7 +99,9 @@
         <div class="aviso">
             DOCUMENTO INTERNO – SIN VALOR LEGAL
             <div style="font-weight: normal; font-size: 9px;">
-                @if ($validada)
+                @if ($validada && $fueraDeLinea)
+                    Emitida fuera de línea en el ambiente de pruebas del SIN. No sirve para crédito fiscal.
+                @elseif ($validada)
                     Validado en el ambiente de pruebas del SIN. No sirve para crédito fiscal.
                 @else
                     Todavía no fue validado por el SIN. No sirve para crédito fiscal.
@@ -192,7 +201,11 @@
                     @if ($factura->leyenda)
                         <div>{{ $factura->leyenda }}</div>
                     @endif
-                    <div class="l3">“Este documento es la Representación Gráfica de un Documento Fiscal Digital emitido en una modalidad de facturación en línea”</div>
+                    @if ($fueraDeLinea)
+                        <div class="l3">“Este documento es la Representación Gráfica de un Documento Fiscal Digital emitido fuera de línea”</div>
+                    @else
+                        <div class="l3">“Este documento es la Representación Gráfica de un Documento Fiscal Digital emitido en una modalidad de facturación en línea”</div>
+                    @endif
                 </div>
             </td>
             <td style="width: 22%;" class="r">

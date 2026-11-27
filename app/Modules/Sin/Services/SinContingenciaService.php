@@ -174,6 +174,36 @@ class SinContingenciaService
 
         // Un evento por cada CUFD con el que se emitió fuera de línea.
         foreach ($pendientes->groupBy('cufd') as $cufdEvento => $facturas) {
+            // Un cierre anterior pudo registrar el evento y no llegar a enviar el paquete: ese evento se reutiliza,
+            // porque el SIN no admite registrar otro con fechas que se crucen con el ya registrado (981).
+            $reutilizables = SinEvento::where('cufd_evento', (string) $cufdEvento)
+                ->where('estado', SinEvento::REGISTRADO)
+                ->whereDoesntHave('paquetes', fn ($q) => $q->where('estado', '!=', SinPaquete::RECHAZADO))
+                ->orderBy('fecha_inicio')
+                ->get();
+
+            foreach ($reutilizables as $evento) {
+                $dentro = $facturas->filter(fn (Factura $f) => $this->dentroDelEvento($f, $evento));
+
+                if ($dentro->isEmpty()) {
+                    continue;
+                }
+
+                $pasos[] = [
+                    'ok'    => true,
+                    'texto' => 'Se reutiliza el evento ya registrado (código ' . $evento->codigo_recepcion . ') del '
+                        . $evento->fecha_inicio->format('d/m/Y H:i:s') . ' al ' . $evento->fecha_fin->format('d/m/Y H:i:s') . '.',
+                ];
+
+                $this->enviarEnPaquetes($evento, $dentro, $nuevo, $cuis, $pasos);
+
+                $facturas = $facturas->reject(fn (Factura $f) => $dentro->contains('id_factura', $f->id_factura));
+            }
+
+            if ($facturas->isEmpty()) {
+                continue;
+            }
+
             $evento = $this->registrarEvento($motivo, (string) $cufdEvento, $nuevo, $cuis, $facturas);
 
             if ($evento->estado !== SinEvento::REGISTRADO) {
@@ -188,21 +218,41 @@ class SinContingenciaService
                     . $evento->fecha_inicio->format('d/m/Y H:i:s') . ' al ' . $evento->fecha_fin->format('d/m/Y H:i:s') . '.',
             ];
 
-            foreach ($facturas->chunk(self::MAX_FACTURAS_POR_PAQUETE) as $grupo) {
-                $paquete = $this->enviarPaquete($evento, $grupo->values(), $nuevo, $cuis);
-                $pasos[] = [
-                    'ok'    => $paquete->estado !== SinPaquete::RECHAZADO,
-                    'texto' => 'Paquete de ' . $paquete->cantidad_facturas . ' factura(s) (FAC-'
-                        . sprintf('%06d', $paquete->numero_inicio) . ' a FAC-' . sprintf('%06d', $paquete->numero_fin) . '): '
-                        . $paquete->estado . ($paquete->mensajes ? ' · ' . $paquete->mensajes : ''),
-                ];
-            }
+            $this->enviarEnPaquetes($evento, $facturas, $nuevo, $cuis, $pasos);
         }
 
         // La caída ya quedó registrada como evento.
         $this->comunicacion->limpiarCaida();
 
         return $pasos;
+    }
+
+    /** ¿La fecha de emisión de la factura cae dentro del período del evento? */
+    private function dentroDelEvento(Factura $factura, SinEvento $evento): bool
+    {
+        $fecha = $this->fechaDelXml($factura);
+
+        if (! $fecha) {
+            return false;
+        }
+
+        $fecha = Carbon::parse($fecha);
+
+        return $fecha->greaterThanOrEqualTo($evento->fecha_inicio) && $fecha->lessThanOrEqualTo($evento->fecha_fin);
+    }
+
+    /** Envía las facturas del evento en paquetes y anota cada paso. */
+    private function enviarEnPaquetes(SinEvento $evento, $facturas, SinCufd $nuevo, SinCuis $cuis, array &$pasos): void
+    {
+        foreach ($facturas->values()->chunk(self::MAX_FACTURAS_POR_PAQUETE) as $grupo) {
+            $paquete = $this->enviarPaquete($evento, $grupo->values(), $nuevo, $cuis);
+            $pasos[] = [
+                'ok'    => $paquete->estado !== SinPaquete::RECHAZADO,
+                'texto' => 'Paquete de ' . $paquete->cantidad_facturas . ' factura(s) (FAC-'
+                    . sprintf('%06d', $paquete->numero_inicio) . ' a FAC-' . sprintf('%06d', $paquete->numero_fin) . '): '
+                    . $paquete->estado . ($paquete->mensajes ? ' · ' . $paquete->mensajes : ''),
+            ];
+        }
     }
 
     private function nuevoCufd(SinCuis $cuis): SinCufd
@@ -274,7 +324,7 @@ class SinContingenciaService
         }
 
         if ($inicio->greaterThanOrEqualTo($primera)) {
-            $inicio = $primera->copy()->subSeconds(1);
+            throw new RuntimeException('Las facturas pendientes caen dentro de un evento ya registrado y no se pueden asociar a uno nuevo. Revisa los eventos de la pantalla de contingencia.');
         }
 
         $descripcion = $this->motivos()[$motivo];

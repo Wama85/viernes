@@ -23,8 +23,12 @@ class FacturaPdfService
         $empresa = Empresa::datos();
         $detalles = $factura->detalles->sortBy('id_cotizacion_detalle')->values();
 
-        $validada = $factura->estado_sin === Factura::SIN_VALIDADA && $factura->cuf;
-        // Sin valor legal: aún no validada por el SIN, o validada en el ambiente de pruebas.
+        // Emitida en contingencia (CUF tipo 2): sigue indicándolo en el PDF aunque el SIN ya haya validado el paquete.
+        $fueraDeLinea = (int) $factura->codigo_emision === Factura::EMISION_FUERA_DE_LINEA;
+
+        // Con código de autorización (CUF): validada por el SIN, o emitida fuera de línea a la espera del paquete.
+        $validada = in_array($factura->estado_sin, [Factura::SIN_VALIDADA, Factura::SIN_FUERA_DE_LINEA], true) && $factura->cuf;
+        // Sin valor legal: aún sin CUF, o emitida en el ambiente de pruebas.
         $sinValorLegal = ! $validada || $factura->esDePrueba();
 
         $documento = $factura->cliente_documento
@@ -55,6 +59,8 @@ class FacturaPdfService
             'descuentoTotal' => $descuentoTotal,
             'total'          => $total,
             'validada'       => (bool) $validada,
+            'fueraDeLinea'   => $fueraDeLinea,
+            'anulada'        => $factura->estado === Factura::ANULADA,
             'sinValorLegal'  => $sinValorLegal,
         ])->setPaper('a4');
     }

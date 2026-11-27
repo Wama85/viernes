@@ -153,16 +153,40 @@ class SinFacturaEmisionService
 
         $detalles = $this->detalles($factura);
 
-        // Los precios del sistema ya incluyen el IVA (13%); la v3 pide precios netos y el IVA aparte.
-        // Cada ítem se calcula como lo valida el SIN y el IVA es exactamente el 13 % del neto.
-        // Los centavos de redondeo se absorben con el descuento adicional, para que el total
-        // facturado sea el de la cotización.
         // El descuento adicional global (con IVA incluido) rebaja el total que debe quedar facturado.
         $totalConIva = round(array_sum(array_column($detalles, 'subTotal')) - (float) $factura->descuento_adicional, 2);
-        $detalles = $this->aNeto($detalles, $totalConIva);
-        $neto = round(array_sum(array_column($detalles, 'subTotal')), 2);
 
-        [$descuentoAdicional, $iva, $montoTotal] = $this->ajusteFiscal($neto, $totalConIva);
+        if ($this->xml->formato() === 'v2') {
+            // v2: los precios van con el IVA incluido, tal como en la cotización. No hay neto ni IVA aparte,
+            // así que el total enviado es exactamente el de la cotización (sin ajustes de redondeo).
+            $descuentoAdicional = round((float) $factura->descuento_adicional, 2);
+            $iva = null;
+            $montoTotal = $totalConIva;
+        } else {
+            // v3: precios netos y el IVA aparte. Cada ítem se calcula como lo valida el SIN y el IVA es
+            // exactamente el 13 % del neto. Los centavos de redondeo se absorben con el descuento adicional,
+            // para que el total facturado sea el de la cotización. Si con el precio neto redondeado al más
+            // cercano no se llega al total (quedaría corto), se prueba redondeando hacia arriba.
+            $mejor = null;
+
+            foreach ([false, true] as $haciaArriba) {
+                $candidatos = $this->aNeto($detalles, $totalConIva, $haciaArriba);
+                $neto = round(array_sum(array_column($candidatos, 'subTotal')), 2);
+                [$d, $i, $m] = $this->ajusteFiscal($neto, $totalConIva);
+                $diferencia = abs($m - $totalConIva);
+
+                if ($mejor === null || $diferencia < $mejor['diferencia'] - 0.00001) {
+                    $mejor = ['detalles' => $candidatos, 'ajuste' => [$d, $i, $m], 'diferencia' => $diferencia];
+                }
+
+                if ($diferencia < 0.005) {
+                    break;
+                }
+            }
+
+            $detalles = $mejor['detalles'];
+            [$descuentoAdicional, $iva, $montoTotal] = $mejor['ajuste'];
+        }
 
         // La fecha de emisión es la del envío: el SIN la exige cercana a "ahora".
         $fecha = now();
@@ -394,10 +418,12 @@ class SinFacturaEmisionService
      * subtotal = cantidad × precio neto unitario − descuento. El IVA se obtiene luego como la
      * diferencia entre el total de la cotización y la suma de los netos.
      */
-    private function aNeto(array $detalles, float $totalConIva): array
+    private function aNeto(array $detalles, float $totalConIva, bool $haciaArriba = false): array
     {
         foreach ($detalles as $i => $d) {
-            $precioNeto = round($d['precioUnitario'] / 1.13, 2);
+            $precioNeto = $haciaArriba
+                ? ceil(round($d['precioUnitario'] / 1.13 * 100, 6)) / 100
+                : round($d['precioUnitario'] / 1.13, 2);
             $descuentoNeto = round($d['montoDescuento'] / 1.13, 2);
 
             $detalles[$i]['precioUnitario'] = $precioNeto;

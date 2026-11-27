@@ -34,7 +34,7 @@
                      style="background-color:#fffbeb; color:#78350f; border:1px solid #fcd34d;">
                     <strong>Emitida fuera de línea.</strong> No había comunicación con el SIN. Se puede entregar al cliente
                     como factura emitida en contingencia; se enviará al SIN en un paquete cuando se recupere la conexión.
-                    Hasta entonces no se puede anular ni enviar por correo.
+                    Hasta entonces no se puede anular, pero sí enviarla por correo al cliente.
                 </div>
             @endif
 
@@ -182,7 +182,7 @@
                        style="background-color:#0f766e; color:#ffffff; display:inline-block;">Descargar XML</a>
                 @endif
 
-                @if ($factura->estado === 'APROBADA' && $factura->estado_sin === 'VALIDADA' && filled($factura->xml))
+                @if ($factura->estado === 'APROBADA' && in_array($factura->estado_sin, ['VALIDADA', 'FUERA_DE_LINEA'], true) && filled($factura->xml))
                     <form method="POST" action="{{ route('facturas.enviar-correo', $factura) }}"
                           x-data="{ enviando: false }" @submit="enviando = true">
                         @csrf

@@ -10,10 +10,10 @@ class SinFacturaXml
     private const XSI = 'http://www.w3.org/2001/XMLSchema-instance';
 
     /**
-     * Validar contra el XSD local (que es el de la v2). Mientras exploramos la estructura de la v3,
-     * la valida el propio SIN. Ponlo en true cuando tengamos el XSD de la v3.
+     * El XSD local es el de la v2, así que solo se valida el formato v2. En v3 lo valida el propio SIN
+     * (ponlo en true cuando tengamos el XSD de la v3).
      */
-    private const VALIDAR_LOCAL = false;
+    private const VALIDAR_LOCAL_V3 = false;
 
     /** Campos que, si están vacíos, se escriben como elemento vacío (<campo></campo>) en vez de xsi:nil. */
     private const VACIO_EN_BLANCO = ['complemento'];
@@ -21,9 +21,23 @@ class SinFacturaXml
     /** v3: campos que ya no van en su lugar de la v2 (o que ya no existen). */
     private const QUITAR_V3 = ['montoTotal', 'montoTotalSujetoIva', 'cafc'];
 
+    /** Formato del XML: 'v2' o 'v3'. SIN_FORMATO lo fija; si está vacío se deduce de la URL del servicio. */
+    public function formato(): string
+    {
+        $f = strtolower(trim((string) config('sin.formato')));
+
+        if (in_array($f, ['v2', 'v3'], true)) {
+            return $f;
+        }
+
+        return str_contains((string) config('sin.url_base'), '/v2') ? 'v2' : 'v3';
+    }
+
     /** Arma el XML respetando el orden en que vienen los campos. */
     public function construir(array $cabecera, array $detalles): string
     {
+        $v3 = $this->formato() === 'v3';
+
         $doc = new DOMDocument('1.0', 'UTF-8');
         $doc->xmlStandalone = true;
         $doc->formatOutput = false;
@@ -35,12 +49,12 @@ class SinFacturaXml
 
         $nodoCabecera = $doc->createElement('cabecera');
         $raiz->appendChild($nodoCabecera);
-        $this->campos($doc, $nodoCabecera, $this->adaptarCabeceraV3($cabecera, $detalles));
+        $this->campos($doc, $nodoCabecera, $v3 ? $this->adaptarCabeceraV3($cabecera, $detalles) : $this->adaptarCabeceraV2($cabecera));
 
         foreach ($detalles as $detalle) {
             $nodo = $doc->createElement('detalle');
             $raiz->appendChild($nodo);
-            $this->campos($doc, $nodo, $this->adaptarDetalleV3($detalle));
+            $this->campos($doc, $nodo, $v3 ? $this->adaptarDetalleV3($detalle) : $detalle);
         }
 
         return $doc->saveXML();
@@ -49,7 +63,7 @@ class SinFacturaXml
     /** Devuelve la lista de errores (vacía si el XML es válido). */
     public function validar(string $xml): array
     {
-        if (! self::VALIDAR_LOCAL) {
+        if ($this->formato() === 'v3' && ! self::VALIDAR_LOCAL_V3) {
             return [];
         }
 
@@ -79,6 +93,14 @@ class SinFacturaXml
         }
 
         return $errores ?: ['El XML no cumple el esquema.'];
+    }
+
+    /** v2: la cabecera va como viene (precios con IVA incluido); solo se descarta el dato interno ivaFijo. */
+    private function adaptarCabeceraV2(array $cabecera): array
+    {
+        unset($cabecera['ivaFijo']);
+
+        return $cabecera;
     }
 
     /**
